@@ -1,0 +1,15 @@
+# Live game state — every voyage is a fresh one
+.meridian/
+
+# The player writes these two files themselves. That's the whole game.
+# Keeping them out of the repo means the next person starts with a blank page.
+.claude/skills/distress-triage/
+.claude/agents/hull-sentinel.md
+
+__pycache__/
+*.pyc
+.DS_Store
+*.swp
+*.swo
+*~
+.gstack/

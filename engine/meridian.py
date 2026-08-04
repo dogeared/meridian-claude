@@ -1,0 +1,966 @@
+#!/usr/bin/env python3
+"""MERIDIAN, Level 2 — the ship's console.
+
+This is the game engine. It owns the clock, the ship's systems, and the
+event schedule; Claude (the copilot) reads it and speaks for it.
+
+Why a CLI and not a library: every state change the player or an agent
+makes has to be a real, auditable tool call. A subagent patching a hull
+breach runs `meridian.py patch 7 --as agent` and the engine decides
+whether that's allowed. The guardrail is enforced here, not in prose.
+
+Time: one real minute is one in-game hour (override with
+MERIDIAN_SECONDS_PER_HOUR for testing). The clock advances lazily —
+`status` catches the sim up to wall time and replays whatever happened
+while the player was thinking, so the ship keeps flying between turns
+whether or not the daemon is running.
+
+Stdlib only, Python 3.9+. No dependencies, nothing to install.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import random
+import re
+import sys
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+STATE_DIR = ROOT / ".meridian"
+STATE_PATH = STATE_DIR / "state.json"
+CONSOLE_PATH = STATE_DIR / "console.txt"
+LOCK_PATH = STATE_DIR / "engine.lock"
+
+SKILL_PATH = ROOT / ".claude" / "skills" / "distress-triage" / "SKILL.md"
+AGENT_PATH = ROOT / ".claude" / "agents" / "hull-sentinel.md"
+
+SECONDS_PER_HOUR = float(os.environ.get("MERIDIAN_SECONDS_PER_HOUR", "60"))
+VOYAGE_HOURS = 24
+SEED = 7757
+
+STRUCTURAL_CM = 2.0
+MICRO_HULL_COST = 1.5       # hull % per open micro-breach per hour
+STRUCT_HULL_COST = 3.0      # hull % per open structural breach per hour
+BEACON_HOURS = (3, 6, 9, 12, 15, 18, 21)
+METEOR_WARN_HOUR = 10
+METEOR_START_HOUR = 12
+METEOR_END_HOUR = 22
+
+BAR_W = 10
+
+
+# ─────────────────────────────────────────────────────────── state io ──
+
+def _now() -> float:
+    return time.time()
+
+
+def load() -> dict:
+    if not STATE_PATH.exists():
+        die("No voyage in progress. Run: engine/meridian.py init --name <name>")
+    with STATE_PATH.open() as fh:
+        return json.load(fh)
+
+
+def save(state: dict) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = STATE_PATH.with_suffix(".json.tmp")
+    with tmp.open("w") as fh:
+        json.dump(state, fh, indent=2)
+    tmp.replace(STATE_PATH)
+
+
+def die(msg: str, code: int = 1) -> None:
+    print(msg, file=sys.stderr)
+    raise SystemExit(code)
+
+
+class _Lock:
+    """Cheap cross-process lock so the daemon and a `status` call can't
+    both advance the sim and double-apply an hour."""
+
+    def __init__(self, timeout: float = 5.0):
+        self.timeout = timeout
+        self.fd = None
+
+    def __enter__(self):
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        deadline = _now() + self.timeout
+        while True:
+            try:
+                self.fd = os.open(str(LOCK_PATH), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                return self
+            except FileExistsError:
+                if _now() > deadline:                      # stale lock, take it
+                    try:
+                        LOCK_PATH.unlink()
+                    except FileNotFoundError:
+                        pass
+                    continue
+                time.sleep(0.05)
+
+    def __exit__(self, *exc):
+        if self.fd is not None:
+            os.close(self.fd)
+        try:
+            LOCK_PATH.unlink()
+        except FileNotFoundError:
+            pass
+        return False
+
+
+# ──────────────────────────────────────────────────────────── new game ──
+
+def new_state(name: str) -> dict:
+    return {
+        "name": name,
+        "started_at": _now(),
+        "hour": 0,
+        "seed": SEED,
+        "arrival_hour": VOYAGE_HOURS,
+        "last_seen_hour": -1,
+        "sys": {
+            "breaker3": False,
+            "nav_online": False,
+            "nav_err": None,
+            "hull": 100.0,
+            "o2": 100.0,
+            "power": 68.0,
+            "drift": 0.0,
+        },
+        "breaches": [],
+        "beacons": [],
+        "flags": {
+            "breaker_hour": None,
+            "refix_hour": None,
+            "skill_armed_hour": None,
+            "agent_armed_hour": None,
+            "agent_watch_until": None,
+            "agent_run_verified": False,
+            "guardrail_overridden_by_agent": False,
+            "meteor_warned": False,
+            "outcome": None,          # None | "home" | "hull" | "o2"
+            "ended_hour": None,
+        },
+        "log": [],
+        "next_breach_id": 1,
+    }
+
+
+def logev(state: dict, kind: str, text: str, hour: int = None) -> None:
+    state["log"].append({
+        "hour": state["hour"] if hour is None else hour,
+        "kind": kind,
+        "text": text,
+    })
+
+
+# ─────────────────────────────────────────────────────────────── clock ──
+
+def wall_hour(state: dict) -> int:
+    elapsed = _now() - state["started_at"]
+    return max(0, int(elapsed // SECONDS_PER_HOUR))
+
+
+def rng_for(state: dict, hour: int) -> random.Random:
+    """Per-hour deterministic RNG: replays are identical, so the log the
+    player reads is the log that actually happened."""
+    return random.Random(f"{state['seed']}:{hour}")
+
+
+def advance(state: dict) -> dict:
+    """Catch the sim up to wall-clock time, one hour at a time."""
+    if state["flags"]["outcome"]:
+        return state
+    target = min(wall_hour(state), state["arrival_hour"] + 48)
+    while state["hour"] < target and not state["flags"]["outcome"]:
+        state["hour"] += 1
+        tick_hour(state)
+    return state
+
+
+def tick_hour(state: dict) -> None:
+    h = state["hour"]
+    s = state["sys"]
+    rng = rng_for(state, h)
+
+    # ── power: the tripped breaker is still bleeding the bus
+    if not s["breaker3"]:
+        s["power"] = max(0.0, s["power"] - 2.0)
+        if h % 3 == 0:
+            logev(state, "advisory", "nav bus still unpowered; breaker 3 reads OFF")
+
+    # ── drift: no heading at all is worse than a stale one
+    if not s["nav_online"]:
+        s["drift"] += 0.5
+    elif s["nav_err"]:
+        s["drift"] += 0.25
+    state["arrival_hour"] = VOYAGE_HOURS + int(state["sys"]["drift"])
+
+    # ── beacons
+    if h in BEACON_HOURS:
+        state["beacons"].append(make_beacon(state, h, rng))
+        n = len([b for b in state["beacons"] if not b["resolved"]])
+        logev(state, "beacon", f"inbound subspace distress beacon #{len(state['beacons'])} "
+                               f"({n} now unresolved)")
+
+    # ── meteors
+    if h == METEOR_WARN_HOUR and not state["flags"]["meteor_warned"]:
+        state["flags"]["meteor_warned"] = True
+        logev(state, "sys", "micro-meteor field ahead, duration approx 10 hours; "
+                            "hull impacts imminent")
+    if METEOR_START_HOUR <= h <= METEOR_END_HOUR:
+        for _ in range(rng.choice([0, 1, 1, 2, 2, 3])):
+            spawn_breach(state, h, rng)
+
+    apply_standing_watch(state, h)
+    apply_decay(state, h)
+    check_end(state, h)
+
+
+def make_beacon(state: dict, hour: int, rng: random.Random) -> dict:
+    origins = [
+        ("KEPLER-9 RELAY", "hull breach, 3 souls, atmosphere venting"),
+        ("SV BRIGHT ANSWER", "reactor scram, adrift, 11 souls"),
+        ("TALLOW STATION", "medical, no physician aboard"),
+        ("UNREGISTERED HULK", "automated loop, no life signs detected"),
+        ("MINING BARGE ODUYA", "collision, 2 injured, power failing"),
+        ("COURIER WREN", "navigation failure, requesting a fix"),
+        ("BUOY 41-C", "routine position ping, no distress"),
+    ]
+    origin, detail = origins[(len(state["beacons"])) % len(origins)]
+    return {
+        "id": len(state["beacons"]) + 1,
+        "hour": hour,
+        "origin": origin,
+        "raw": f"::BEACON {hour:02d}00Z::ORIGIN {origin}::CLASS "
+               f"{rng.choice(['A', 'B', 'C'])}::MSG {detail}::",
+        "resolved": False,
+        "by": None,
+        "urgency": None,
+    }
+
+
+def spawn_breach(state: dict, hour: int, rng: random.Random) -> dict:
+    structural = rng.random() < 0.12
+    size = round(rng.uniform(2.0, 4.5) if structural else rng.uniform(0.3, 1.8), 1)
+    critical = structural and rng.random() < 0.6
+    b = {
+        "id": state["next_breach_id"],
+        "hour": hour,
+        "size_cm": size,
+        "critical_adjacent": critical,
+        "patched": False,
+        "patched_by": None,
+        "escalated": False,
+    }
+    state["next_breach_id"] += 1
+    state["breaches"].append(b)
+    where = " beside the primary coolant junction" if critical else ""
+    logev(state, "impact", f"impact: breach #{b['id']} at {size}cm"
+                           f"{' (STRUCTURAL)' if is_structural(b) else ''}{where}")
+    return b
+
+
+def is_structural(b: dict) -> bool:
+    return b["size_cm"] >= STRUCTURAL_CM or b["critical_adjacent"]
+
+
+def apply_standing_watch(state: dict, hour: int) -> None:
+    """A dispatched hull-sentinel holds the watch for its window: it seals
+    new micro-breaches on its own and stops at anything structural."""
+    until = state["flags"]["agent_watch_until"]
+    if not until or hour > until:
+        return
+    if not verify_agent()["armed"]:
+        return
+    for b in state["breaches"]:
+        if b["patched"] or b["hour"] != hour:
+            continue
+        if is_structural(b):
+            b["escalated"] = True
+            logev(state, "advisory", f"hull-sentinel HELD on breach #{b['id']} "
+                                     f"({b['size_cm']}cm, over its line) and is asking for you")
+        else:
+            b["patched"] = True
+            b["patched_by"] = "agent"
+            logev(state, "action", f"hull-sentinel sealed breach #{b['id']} "
+                                   f"({b['size_cm']}cm) and verified the seal")
+
+
+def apply_decay(state: dict, hour: int) -> None:
+    s = state["sys"]
+    open_breaches = [b for b in state["breaches"] if not b["patched"]]
+    bleed = sum(STRUCT_HULL_COST if is_structural(b) else MICRO_HULL_COST
+                for b in open_breaches)
+    if bleed:
+        s["hull"] = max(0.0, s["hull"] - bleed)
+    if s["power"] <= 0:
+        s["o2"] = max(0.0, s["o2"] - 2.0)
+    if s["hull"] < 40:
+        s["o2"] = max(0.0, s["o2"] - 0.6)
+
+    # An escalated breach is a question the agent asked and the player hasn't
+    # answered yet. Keep asking — it bleeds the hull the whole time it's open.
+    for b in open_breaches:
+        if b["escalated"] and hour > b["hour"] and (hour - b["hour"]) % 3 == 0:
+            logev(state, "advisory",
+                  f"still holding breach #{b['id']} ({b['size_cm']}cm) after "
+                  f"{hour - b['hour']}h — hull-sentinel needs your decision")
+
+    for level, msg in ((70, "hull integrity slipping"),
+                       (50, "hull under 50 percent"),
+                       (30, "hull critical")):
+        key = f"warned_{level}"
+        if s["hull"] < level and not state["flags"].get(key):
+            state["flags"][key] = True
+            logev(state, "advisory", f"{msg}: {s['hull']:.0f} percent, "
+                                     f"{len(open_breaches)} breaches open")
+
+
+def check_end(state: dict, hour: int) -> None:
+    s, f = state["sys"], state["flags"]
+    if s["hull"] <= 0:
+        f["outcome"], f["ended_hour"] = "hull", hour
+        logev(state, "fatal", "HULL FAILURE. The Meridian breaks up at hour "
+                              f"{hour}.")
+    elif s["o2"] <= 0:
+        f["outcome"], f["ended_hour"] = "o2", hour
+        logev(state, "fatal", f"LIFE SUPPORT EXHAUSTED at hour {hour}.")
+    elif hour >= state["arrival_hour"] and s["nav_online"] and not s["nav_err"]:
+        f["outcome"], f["ended_hour"] = "home", hour
+        logev(state, "sys", f"VOYAGE COMPLETE. Meridian makes port at hour {hour}.")
+
+
+# ────────────────────────────────────────────────────────── validation ──
+
+def _frontmatter(text: str):
+    m = re.match(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", text, re.S)
+    if not m:
+        return None, text
+    fm = {}
+    key = None
+    for line in m.group(1).splitlines():
+        if re.match(r"^\s+\S", line) and key:        # folded continuation
+            fm[key] += " " + line.strip()
+            continue
+        if ":" in line:
+            key, _, val = line.partition(":")
+            key = key.strip()
+            fm[key] = val.strip()
+    return fm, m.group(2)
+
+
+def _check(ok: bool, cid: str, msg: str, fix: str = "", required: bool = True) -> dict:
+    return {"ok": bool(ok), "id": cid, "msg": msg, "fix": fix, "required": required}
+
+
+def verify_skill() -> dict:
+    """Grade the player's SKILL.md the way Claude actually reads one:
+    can I tell WHEN to use this, and WHAT to do?"""
+    rel = SKILL_PATH.relative_to(ROOT)
+    if not SKILL_PATH.exists():
+        return {"path": str(rel), "exists": False, "armed": False, "checks": [
+            _check(False, "exists", f"{rel} does not exist yet",
+                   "Create the file with frontmatter (name, description) and numbered steps.")]}
+
+    text = SKILL_PATH.read_text()
+    fm, body = _frontmatter(text)
+    checks = [_check(fm is not None, "frontmatter",
+                     "YAML frontmatter fenced by --- at the top of the file",
+                     "First line must be exactly ---, then name/description, then --- again.")]
+    fm = fm or {}
+    name = fm.get("name", "")
+    desc = fm.get("description", "")
+
+    checks.append(_check(bool(re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", name)),
+                         "name", f"name is lowercase-kebab (got {name!r})",
+                         "e.g. name: distress-triage"))
+    checks.append(_check(len(desc) >= 40, "description-length",
+                         f"description is substantial ({len(desc)} chars)",
+                         "Say what it does AND when to use it, in one or two sentences."))
+    triggers = ("use when", "use whenever", "use this when", "when a", "when the",
+                "whenever a", "whenever the", "triggered when", "on receipt", "for any")
+    checks.append(_check(any(t in desc.lower() for t in triggers), "description-trigger",
+                         "description names a trigger condition",
+                         'Add a clause like "Use whenever a distress beacon is received."'))
+    checks.append(_check(bool(re.search(r"(^|\n)\s*(\d+\.|[-*])\s+\S", body)) or
+                         bool(re.search(r"(?i)##\s*steps", body)),
+                         "steps", "body has concrete steps",
+                         "Add a numbered list of what to do, in order."))
+    low = body.lower() + desc.lower()
+    checks.append(_check(sum(w in low for w in ("critical", "urgent", "routine")) >= 2,
+                         "rubric", "body encodes your urgency rubric",
+                         "Name the categories you want, e.g. CRITICAL / URGENT / ROUTINE."))
+    armed = all(c["ok"] for c in checks if c["required"])
+    return {"path": str(rel), "exists": True, "armed": armed, "checks": checks}
+
+
+def verify_agent() -> dict:
+    """Grade the player's agent file. The guardrail and the verification
+    step are what separate an agent you trust from one you babysit."""
+    rel = AGENT_PATH.relative_to(ROOT)
+    if not AGENT_PATH.exists():
+        return {"path": str(rel), "exists": False, "armed": False, "checks": [
+            _check(False, "exists", f"{rel} does not exist yet",
+                   "Create it with frontmatter (name, description, tools) and a loop.")]}
+
+    text = AGENT_PATH.read_text()
+    fm, body = _frontmatter(text)
+    checks = [_check(fm is not None, "frontmatter",
+                     "YAML frontmatter fenced by --- at the top of the file",
+                     "First line must be exactly ---, then name/description/tools, then ---.")]
+    fm = fm or {}
+    name = fm.get("name", "")
+    desc = fm.get("description", "")
+    tools = fm.get("tools", "")
+
+    checks.append(_check(bool(re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", name)),
+                         "name", f"name is lowercase-kebab (got {name!r})",
+                         "e.g. name: hull-sentinel"))
+    checks.append(_check(len(desc) >= 30, "description",
+                         f"description says what it does unattended ({len(desc)} chars)",
+                         "One line: what job it owns, and what it escalates."))
+    checks.append(_check(bool(tools.strip()), "tools",
+                         f"tools are declared (got {tools!r})",
+                         "e.g. tools: Bash, Read  — it needs Bash to drive the console."))
+    low = body.lower()
+    checks.append(_check(any(w in low for w in ("loop", "each cycle", "every cycle",
+                                               "repeat", "until", "keep ")),
+                         "loop", "body describes a repeating watch",
+                         "Tell it to keep scanning until the watch window ends."))
+    guard = any(w in low for w in ("escalate", "do not", "don't", "never", "stop and ask",
+                                  "alert the", "wait for"))
+    checks.append(_check(guard and any(w in low for w in ("structural", "critical", "2cm",
+                                                          "2 cm", "over ")),
+                         "guardrail", "body draws a line it will not cross alone",
+                         "Say plainly: patch micro-breaches, but DO NOT touch structural "
+                         "ones or anything beside a critical system, escalate those."))
+    checks.append(_check(any(w in low for w in ("verify", "confirm", "check that",
+                                               "make sure", "re-scan", "rescan")),
+                         "verify", "body tells it to verify its own work",
+                         "Add: confirm each seal held before moving on.",
+                         required=False))
+    armed = all(c["ok"] for c in checks if c["required"])
+    return {"path": str(rel), "exists": True, "armed": armed, "checks": checks}
+
+
+def render_verify(report: dict, label: str) -> str:
+    out = [f"{label}: {report['path']}"]
+    for c in report["checks"]:
+        mark = "PASS" if c["ok"] else ("FAIL" if c["required"] else "MISS")
+        out.append(f"  [{mark}] {c['msg']}")
+        if not c["ok"] and c["fix"]:
+            out.append(f"         -> {c['fix']}")
+    out.append("")
+    out.append(f"  ARMED: {'yes' if report['armed'] else 'no'}"
+               + ("" if report["armed"] else "  (required checks must pass)"))
+    return "\n".join(out)
+
+
+# ──────────────────────────────────────────────────────────── renderer ──
+
+def bar(pct: float, width: int = BAR_W) -> str:
+    filled = int(round(max(0.0, min(100.0, pct)) / 100 * width))
+    return "#" * filled + "." * (width - filled)
+
+
+def _row(inner: str, width: int) -> str:
+    return "|" + inner.ljust(width)[:width] + "|"
+
+
+def dashboard(state: dict) -> str:
+    s, f = state["sys"], state["flags"]
+    W = 66
+    openb = [b for b in state["breaches"] if not b["patched"]]
+    struct = [b for b in openb if is_structural(b)]
+    unres = [b for b in state["beacons"] if not b["resolved"]]
+
+    nav = "ONLINE " if s["nav_online"] and not s["nav_err"] else \
+          ("FAULT  " if s["nav_online"] else "OFFLINE")
+    brk = "[ ON  ]" if s["breaker3"] else "[ OFF ]"
+    until = f["agent_watch_until"]
+    watch = "STANDING WATCH" if until is not None and until >= state["hour"] else \
+            ("armed, not dispatched" if verify_agent()["armed"] else "NOT DEPLOYED")
+    skill = "armed" if verify_skill()["armed"] else "not written"
+
+    stamp = f" HOUR {state['hour']:02d}/{state['arrival_hour']:02d} =="
+    top = "== USS MERIDIAN . NCC-7757 ".ljust(W - len(stamp), "=") + stamp
+    lines = ["+" + "-" * W + "+"]
+    lines.append(_row(top[:W], W))
+    lines.append("+" + "-" * W + "+")
+    lines.append(_row(f" NAV     {nav}           BREAKER 3   {brk}", W))
+    lines.append(_row(f" HULL    {bar(s['hull'])} {s['hull']:5.1f}%   "
+                      f"breaches  {len(openb)} open"
+                      f"{f' ({len(struct)} STRUCT)' if struct else ''}", W))
+    lines.append(_row(f" O2      {bar(s['o2'])} {s['o2']:5.1f}%   "
+                      f"beacons   {len(unres)} unresolved", W))
+    lines.append(_row(f" POWER   {bar(s['power'])} {s['power']:5.1f}%   "
+                      f"drift     {s['drift']:.2f}h off course", W))
+    lines.append("+" + "-" * W + "+")
+    lines.append(_row(f" distress-triage skill  : {skill}", W))
+    lines.append(_row(f" hull-sentinel agent    : {watch}", W))
+    if s["nav_err"]:
+        lines.append(_row(f" > {s['nav_err']}", W))
+    if not s["breaker3"]:
+        lines.append(_row(" > NAV CONSOLE DARK - no power at the board", W))
+    for b in struct:
+        flag = "ESCALATED BY AGENT" if b["escalated"] else "UNATTENDED"
+        lines.append(_row(f" > STRUCTURAL breach #{b['id']} {b['size_cm']}cm"
+                          f"{' beside coolant junction' if b['critical_adjacent'] else ''}"
+                          f" [{flag}]", W))
+    if f["outcome"]:
+        verdict = {"home": "VOYAGE COMPLETE", "hull": "HULL FAILURE - VOYAGE LOST",
+                   "o2": "LIFE SUPPORT LOST - VOYAGE LOST"}[f["outcome"]]
+        lines.append("+" + "-" * W + "+")
+        lines.append(_row(f" >> {verdict}", W))
+    lines.append("+" + "-" * W + "+")
+    return "\n".join(lines)
+
+
+def render_new_events(state: dict) -> str:
+    since = state["last_seen_hour"]
+    fresh = [e for e in state["log"] if e["hour"] > since]
+    if not fresh:
+        return ""
+    out = [f"NEW SINCE LAST CHECK (hours {since + 1}-{state['hour']}):"]
+    for e in fresh:
+        out.append(f"  h{e['hour']:02d} [{e['kind']}] {e['text']}")
+    return "\n".join(out)
+
+
+# ──────────────────────────────────────────────────────────── scoring ──
+
+def score(state: dict) -> dict:
+    f, s = state["flags"], state["sys"]
+    pts, notes = 50, []
+
+    def add(n, why):
+        nonlocal pts
+        pts += n
+        notes.append(f"{n:+3d}  {why}")
+
+    if f["breaker_hour"] is not None:
+        add(8 if f["breaker_hour"] <= 3 else 3,
+            f"breaker 3 reset at hour {f['breaker_hour']}")
+    else:
+        add(-8, "breaker 3 was never reset; you flew the whole way on a dark board")
+
+    if f["refix_hour"] is not None:
+        add(8, f"star-fix run at hour {f['refix_hour']}, clearing NAV-ERR 0x19")
+    else:
+        add(-6, "NAV-ERR 0x19 was never cleared; drift cost you "
+                f"{s['drift']:.1f} hours")
+
+    if f["skill_armed_hour"] is not None:
+        add(10 if f["skill_armed_hour"] <= 12 else 5,
+            f"distress-triage skill written at hour {f['skill_armed_hour']}")
+    else:
+        add(-10, "you never wrote the skill; every beacon stayed hand-worked")
+
+    by_skill = len([b for b in state["beacons"] if b["resolved"] and b["by"] == "skill"])
+    if by_skill:
+        add(min(10, 2 * by_skill), f"{by_skill} beacons triaged by your own skill")
+    unres = len([b for b in state["beacons"] if not b["resolved"]])
+    if unres:
+        add(-3 * unres, f"{unres} beacons left unanswered")
+
+    if f["agent_armed_hour"] is not None:
+        add(10, f"hull-sentinel written at hour {f['agent_armed_hour']}")
+    else:
+        add(-10, "you never wrote the agent; nobody watched the hull but you")
+    if f["agent_run_verified"]:
+        add(6, "the agent actually ran and did real work on the hull")
+
+    by_agent = len([b for b in state["breaches"] if b["patched_by"] == "agent"])
+    if by_agent:
+        add(min(8, by_agent), f"{by_agent} breaches sealed by the agent, unattended")
+    escal = [b for b in state["breaches"] if b["escalated"]]
+    if escal:
+        add(8, f"the agent stopped and escalated {len(escal)} structural breach(es) "
+               "instead of guessing")
+    if f["guardrail_overridden_by_agent"]:
+        add(-12, "the agent overrode its own guardrail on a structural breach")
+
+    openb = len([b for b in state["breaches"] if not b["patched"]])
+    if openb:
+        add(-2 * openb, f"{openb} breaches still open at the end")
+
+    pts = max(0, min(100, pts))
+    rating = ("FULL SYNC - you and the ship think as one." if pts >= 85 else
+              "STRONG SYNC - a real partnership." if pts >= 70 else
+              "STABLE SYNC - you got there together." if pts >= 50 else
+              "ROUGH SYNC - you made it, a little bruised." if pts >= 30 else
+              "OUT OF SYNC - the ship was doing this alone.")
+    return {"sync": pts, "rating": rating, "notes": notes}
+
+
+def debrief(state: dict) -> str:
+    sc = score(state)
+    f = state["flags"]
+    out = [dashboard(state), ""]
+    outcome = f["outcome"]
+    if outcome == "home":
+        out.append(f"VOYAGE COMPLETE - {state['name']} brought the Meridian home "
+                   f"at hour {f['ended_hour']}.")
+    elif outcome:
+        out.append(f"VOYAGE LOST at hour {f['ended_hour']}.")
+    else:
+        out.append(f"Voyage still in progress at hour {state['hour']}.")
+    out += ["", f"FLIGHT RECORD - {state['name']}",
+            f"  sync {sc['sync']}%  ...  {sc['rating']}", ""]
+    out += [f"  {n}" for n in sc["notes"]]
+    if f["skill_armed_hour"] is None:
+        out += ["", "  What a skill would have caught: every beacon after the third was "
+                    "the same job. One file would have made them handle themselves."]
+    if f["agent_armed_hour"] is None:
+        out += ["", "  What an agent would have caught: the meteor field ran for ten hours. "
+                    "An agent watches all ten without blinking; you cannot."]
+    return "\n".join(out)
+
+
+# ─────────────────────────────────────────────────────────── commands ──
+
+def refresh(state: dict) -> dict:
+    """Advance, sync derived flags from the player's real files, persist."""
+    advance(state)
+    f = state["flags"]
+    if f["outcome"]:                       # voyage is over; nothing arms after that
+        return state
+    if f["skill_armed_hour"] is None and verify_skill()["armed"]:
+        f["skill_armed_hour"] = state["hour"]
+        logev(state, "sys", "SKILL ARMED: distress-triage is on the ship now")
+    if f["agent_armed_hour"] is None and verify_agent()["armed"]:
+        f["agent_armed_hour"] = state["hour"]
+        logev(state, "sys", "AGENT ARMED: hull-sentinel is ready to dispatch")
+    return state
+
+
+def cmd_init(args):
+    if STATE_PATH.exists() and not args.force:
+        die("A voyage is already in progress. Use --force to scrub and restart.")
+    state = new_state(args.name.strip() or "Ensign")
+    state["sys"]["nav_err"] = None
+    logev(state, "sys", "You wake to a low alarm. The nav console is dark.")
+    save(state)
+    print(dashboard(state))
+    print()
+    print(f"Voyage begun. Clock running: 1 real minute = 1 in-game hour "
+          f"(arrival at hour {state['arrival_hour']}).")
+
+
+def cmd_status(args):
+    with _Lock():
+        state = refresh(load())
+        fresh = render_new_events(state)
+        state["last_seen_hour"] = state["hour"]
+        save(state)
+    if args.json:
+        print(json.dumps(state, indent=2))
+        return
+    print(dashboard(state))
+    if fresh:
+        print()
+        print(fresh)
+
+
+def cmd_log(args):
+    state = refresh(load())
+    save(state)
+    for e in state["log"]:
+        if e["hour"] >= args.since:
+            print(f"h{e['hour']:02d} [{e['kind']}] {e['text']}")
+
+
+def cmd_breaker(args):
+    with _Lock():
+        state = refresh(load())
+        if args.number != 3:
+            die(f"Breaker {args.number} is not the one. The nav bus is on breaker 3.")
+        on = args.position == "on"
+        state["sys"]["breaker3"] = on
+        if on and state["flags"]["breaker_hour"] is None:
+            state["flags"]["breaker_hour"] = state["hour"]
+            state["sys"]["nav_online"] = True
+            state["sys"]["nav_err"] = "NAV-ERR 0x19 - heading data stale (last fix: " \
+                                      f"{max(1, state['hour'])}h ago)"
+            logev(state, "action", "breaker 3 reset; nav board boots and throws NAV-ERR 0x19")
+        elif not on:
+            state["sys"]["nav_online"] = False
+            logev(state, "action", "breaker 3 opened; nav board goes dark")
+        save(state)
+    print(dashboard(state))
+
+
+def cmd_refix(args):
+    with _Lock():
+        state = refresh(load())
+        if not state["sys"]["nav_online"]:
+            die("The nav board is dark. No power, no star-fix. Check breaker 3.")
+        if not state["sys"]["nav_err"]:
+            print("Heading is already fresh. Nothing to re-fix.")
+            return
+        state["sys"]["nav_err"] = None
+        state["flags"]["refix_hour"] = state["hour"]
+        logev(state, "action", "star-fix acquired on three references; NAV-ERR 0x19 cleared")
+        check_end(state, state["hour"])
+        save(state)
+    print(dashboard(state))
+    print("\nHeading locked. Drift arrested at "
+          f"{state['sys']['drift']:.2f}h off course.")
+
+
+def cmd_beacons(args):
+    state = refresh(load())
+    save(state)
+    rows = [b for b in state["beacons"] if args.all or not b["resolved"]]
+    if args.json:
+        print(json.dumps(rows, indent=2))
+        return
+    if not rows:
+        print("No beacons in the queue.")
+        return
+    for b in rows:
+        status = f"resolved by {b['by']} ({b['urgency']})" if b["resolved"] else "UNRESOLVED"
+        print(f"#{b['id']}  h{b['hour']:02d}  {b['origin']:<22} {status}")
+        print(f"      {b['raw']}")
+
+
+def cmd_triage(args):
+    with _Lock():
+        state = refresh(load())
+        b = next((x for x in state["beacons"] if x["id"] == args.id), None)
+        if not b:
+            die(f"No beacon #{args.id}.")
+        if b["resolved"]:
+            die(f"Beacon #{args.id} is already resolved.")
+        if args.by == "skill":
+            rep = verify_skill()
+            if not rep["armed"]:
+                print(render_verify(rep, "distress-triage"), file=sys.stderr)
+                die("\nThat beacon cannot be resolved by the skill: the skill is not armed. "
+                    "Fix the checks above, then try again.", code=3)
+        b["resolved"] = True
+        b["by"] = args.by
+        b["urgency"] = args.urgency.upper()
+        logev(state, "action", f"beacon #{b['id']} triaged {b['urgency']} by {args.by}"
+                               + (f": {args.summary}" if args.summary else ""))
+        save(state)
+    print(f"Beacon #{args.id} logged as {args.urgency.upper()} (by {args.by}).")
+    n = len([x for x in state["beacons"] if not x["resolved"]])
+    print(f"{n} beacons still unresolved.")
+
+
+def cmd_scan_hull(args):
+    state = refresh(load())
+    save(state)
+    openb = [b for b in state["breaches"] if not b["patched"]]
+    if args.json:
+        print(json.dumps({
+            "hour": state["hour"],
+            "hull": state["sys"]["hull"],
+            "watch_until": state["flags"]["agent_watch_until"],
+            "breaches": [dict(b, structural=is_structural(b)) for b in openb],
+        }, indent=2))
+        return
+    if not openb:
+        print(f"h{state['hour']:02d} hull scan: no open breaches. "
+              f"Integrity {state['sys']['hull']:.1f}%.")
+        return
+    print(f"h{state['hour']:02d} hull scan: {len(openb)} open. "
+          f"Integrity {state['sys']['hull']:.1f}%.")
+    for b in openb:
+        kind = "STRUCTURAL" if is_structural(b) else "micro"
+        near = " ADJACENT TO CRITICAL SYSTEM" if b["critical_adjacent"] else ""
+        print(f"  #{b['id']:<3} {b['size_cm']:>4}cm  {kind}{near}")
+
+
+def cmd_patch(args):
+    with _Lock():
+        state = refresh(load())
+        b = next((x for x in state["breaches"] if x["id"] == args.id), None)
+        if not b:
+            die(f"No breach #{args.id}.")
+        if b["patched"]:
+            die(f"Breach #{args.id} is already sealed.")
+
+        if is_structural(b) and args.as_ == "agent" and not args.override:
+            b["escalated"] = True
+            logev(state, "advisory", f"hull-sentinel declined breach #{b['id']} "
+                                     f"({b['size_cm']}cm) and escalated it")
+            save(state)
+            die(f"REFUSED. Breach #{b['id']} is {b['size_cm']}cm"
+                f"{' and sits beside a critical system' if b['critical_adjacent'] else ''}. "
+                "That is over the line for an autonomous patch.\n"
+                "Escalate it to the human and keep working the micro-breaches.", code=4)
+
+        if is_structural(b) and args.as_ == "agent" and args.override:
+            state["flags"]["guardrail_overridden_by_agent"] = True
+            logev(state, "advisory", f"agent OVERRODE the guardrail on breach #{b['id']}")
+
+        b["patched"] = True
+        b["patched_by"] = args.as_
+        verified = " and verified the seal" if args.verify else ""
+        logev(state, "action", f"breach #{b['id']} ({b['size_cm']}cm) sealed by "
+                               f"{args.as_}{verified}")
+        if args.as_ == "agent":
+            state["flags"]["agent_run_verified"] = True
+        save(state)
+    print(f"Breach #{args.id} sealed by {args.as_}{verified}.")
+
+
+def cmd_escalate(args):
+    with _Lock():
+        state = refresh(load())
+        b = next((x for x in state["breaches"] if x["id"] == args.id), None)
+        if not b:
+            die(f"No breach #{args.id}.")
+        b["escalated"] = True
+        state["flags"]["agent_run_verified"] = True
+        logev(state, "advisory", f"breach #{b['id']} escalated to the human"
+                                 + (f": {args.note}" if args.note else ""))
+        save(state)
+    print(f"Breach #{args.id} escalated and held for a human decision.")
+
+
+def cmd_dispatch(args):
+    with _Lock():
+        state = refresh(load())
+        rep = verify_agent()
+        if not rep["armed"]:
+            print(render_verify(rep, "hull-sentinel"), file=sys.stderr)
+            die("\nCannot dispatch: the agent file is not armed. Fix the checks above.",
+                code=3)
+        until = state["hour"] + args.hours
+        state["flags"]["agent_watch_until"] = until
+        logev(state, "sys", f"AGENT DISPATCHED: hull-sentinel holds the watch through "
+                            f"hour {until} (autonomy: micro-breach patch; "
+                            f"escalate: structural)")
+        save(state)
+    print(dashboard(state))
+    print(f"\nhull-sentinel is on watch through hour {until}. "
+          "It patches micro-breaches on its own and escalates anything structural.")
+
+
+def cmd_verify(args):
+    if args.what in ("skill", "all"):
+        print(render_verify(verify_skill(), "distress-triage skill"))
+        if args.what == "all":
+            print()
+    if args.what in ("agent", "all"):
+        print(render_verify(verify_agent(), "hull-sentinel agent"))
+
+
+def cmd_verify_json(args):
+    print(json.dumps({"skill": verify_skill(), "agent": verify_agent()}, indent=2))
+
+
+def cmd_debrief(args):
+    with _Lock():
+        state = refresh(load())
+        save(state)
+    print(debrief(state))
+
+
+def cmd_daemon(args):
+    """Optional heartbeat. `status` advances lazily anyway, so this exists
+    to keep console.txt fresh for anyone watching it in a second pane."""
+    print(f"meridian daemon up (interval {args.interval}s, "
+          f"{SECONDS_PER_HOUR}s per in-game hour)")
+    while True:
+        with _Lock():
+            state = refresh(load())
+            save(state)
+            STATE_DIR.mkdir(parents=True, exist_ok=True)
+            CONSOLE_PATH.write_text(dashboard(state) + "\n")
+        if state["flags"]["outcome"]:
+            print(f"daemon exiting: voyage ended ({state['flags']['outcome']})")
+            return
+        time.sleep(args.interval)
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(prog="meridian", description="MERIDIAN Level 2 engine")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    q = sub.add_parser("init", help="begin a voyage")
+    q.add_argument("--name", required=True)
+    q.add_argument("--force", action="store_true")
+    q.set_defaults(fn=cmd_init)
+
+    q = sub.add_parser("status", help="advance the clock and render the console")
+    q.add_argument("--json", action="store_true")
+    q.set_defaults(fn=cmd_status)
+
+    q = sub.add_parser("log", help="event log")
+    q.add_argument("--since", type=int, default=0)
+    q.set_defaults(fn=cmd_log)
+
+    q = sub.add_parser("breaker", help="throw a breaker")
+    q.add_argument("number", type=int)
+    q.add_argument("position", choices=["on", "off"])
+    q.set_defaults(fn=cmd_breaker)
+
+    q = sub.add_parser("refix", help="run a fresh star-fix (clears NAV-ERR 0x19)")
+    q.set_defaults(fn=cmd_refix)
+
+    q = sub.add_parser("beacons", help="list distress beacons")
+    q.add_argument("--all", action="store_true")
+    q.add_argument("--json", action="store_true")
+    q.set_defaults(fn=cmd_beacons)
+
+    q = sub.add_parser("triage", help="resolve a beacon")
+    q.add_argument("id", type=int)
+    q.add_argument("--urgency", required=True,
+                   choices=["critical", "urgent", "routine",
+                            "CRITICAL", "URGENT", "ROUTINE"])
+    q.add_argument("--by", required=True, choices=["skill", "manual"])
+    q.add_argument("--summary", default="")
+    q.set_defaults(fn=cmd_triage)
+
+    q = sub.add_parser("scan-hull", help="list open hull breaches")
+    q.add_argument("--json", action="store_true")
+    q.set_defaults(fn=cmd_scan_hull)
+
+    q = sub.add_parser("patch", help="seal a breach")
+    q.add_argument("id", type=int)
+    q.add_argument("--as", dest="as_", default="human", choices=["human", "agent"])
+    q.add_argument("--verify", action="store_true",
+                   help="confirm the seal held (agents should always do this)")
+    q.add_argument("--override", action="store_true",
+                   help="force a structural patch; logged, and it counts against you")
+    q.set_defaults(fn=cmd_patch)
+
+    q = sub.add_parser("escalate", help="hold a breach for a human decision")
+    q.add_argument("id", type=int)
+    q.add_argument("--note", default="")
+    q.set_defaults(fn=cmd_escalate)
+
+    q = sub.add_parser("dispatch-agent", help="put hull-sentinel on watch")
+    q.add_argument("--hours", type=int, default=6)
+    q.set_defaults(fn=cmd_dispatch)
+
+    q = sub.add_parser("verify", help="grade the player's skill/agent files")
+    q.add_argument("what", nargs="?", default="all", choices=["skill", "agent", "all"])
+    q.set_defaults(fn=cmd_verify)
+
+    q = sub.add_parser("verify-json", help="machine-readable verify report")
+    q.set_defaults(fn=cmd_verify_json)
+
+    q = sub.add_parser("debrief", help="flight record and final sync score")
+    q.set_defaults(fn=cmd_debrief)
+
+    q = sub.add_parser("daemon", help="optional clock heartbeat")
+    q.add_argument("--interval", type=float, default=5.0)
+    q.set_defaults(fn=cmd_daemon)
+
+    args = p.parse_args(argv)
+    args.fn(args)
+
+
+if __name__ == "__main__":
+    main()

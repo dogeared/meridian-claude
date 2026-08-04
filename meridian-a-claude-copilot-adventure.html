@@ -81,6 +81,13 @@
   .lesson .tag{font-family:var(--mono);font-size:11px;letter-spacing:.16em;color:var(--clay);text-transform:uppercase;margin-bottom:6px}
   .lesson b{color:var(--ink)}
 
+  /* Level 2 handoff card */
+  .l2cmd{display:block;margin-top:12px;font-family:var(--mono);font-size:12.5px;line-height:1.85;
+    color:var(--clay-soft);background:var(--code-bg);border:1px solid var(--line);border-radius:8px;
+    padding:10px 12px;white-space:pre;overflow-x:auto;letter-spacing:.02em}
+  .l2note{display:block;margin-top:10px;font-size:13px;color:var(--muted);line-height:1.55}
+  .l2note code{font-family:var(--mono);font-size:12px;color:var(--clay-soft)}
+
   .note{font-size:14.5px;color:var(--muted);border-left:2px solid var(--line);padding:4px 14px}
   .note.good{color:var(--green);border-color:var(--green)}
   .note.meh{color:var(--amber);border-color:var(--amber)}
@@ -274,10 +281,13 @@ function typeInto(node, html){
 
 async function renderBlock(b){
   let wrap;
+  /* text can be a function when a block depends on runtime facts (see the
+     Level 2 handoff) — resolve it at render time, not at load time. */
+  if(typeof b.text==='function') b={...b, text:b.text()};
   if(b.t==='code'){ wrap=renderCode(b); log.appendChild(wrap); }
   else if(b.t==='lesson'){
     wrap=el('div','block lesson');
-    wrap.innerHTML='<div class="tag">◇ Flight manual</div>'+b.text;
+    wrap.innerHTML='<div class="tag">◇ '+(b.tag||'Flight manual')+'</div>'+b.text;
     log.appendChild(wrap);
   }
   else if(b.t==='note'){
@@ -370,6 +380,81 @@ function showInput(cfg){
 }
 
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
+
+/* ============================================================
+   LEVEL 2 HANDOFF
+   Where the player is running this from changes what they need to do next.
+   Opened off their own disk, they may already have the engine sitting beside
+   this file; from the website, they need to clone first. Guessing wrong here
+   is worse than saying nothing, so each branch only claims what it can check.
+   ============================================================ */
+const LEVEL2_REPO = 'github.com/dogeared/meridian-claude';
+const LEVEL2_DIR  = LEVEL2_REPO.split('/').pop();
+let engineDetected = null;   // null until the probe answers (http(s) only)
+
+function level2Env(){
+  if(location.protocol === 'file:') return 'disk';
+  const h = location.hostname;
+  const isLocal = h==='localhost' || h==='127.0.0.1' || h==='::1' || h==='[::1]' ||
+                  /\.local$/.test(h) || /^10\./.test(h) || /^192\.168\./.test(h) ||
+                  /^172\.(1[6-9]|2\d|3[01])\./.test(h);
+  return isLocal ? 'local-server' : 'remote';
+}
+
+/* Only meaningful on a local server: if the engine is fetchable next to us,
+   the player is serving a real clone and doesn't need to clone again. We
+   deliberately don't probe on a remote host — a deploy of the whole repo
+   would serve the engine too, and "you already have it" would be a lie. */
+(function probeEngine(){
+  if(level2Env() !== 'local-server') return;
+  fetch('engine/meridian.py')
+    .then(r => { engineDetected = r.ok; })
+    .catch(() => { engineDetected = false; });
+})();
+
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+/* file:// gives us the real folder this file sits in — so we can print the
+   exact cd the player needs instead of a placeholder. */
+function diskDir(){
+  try{
+    let d = decodeURIComponent(location.pathname).replace(/\/[^/]*$/,'');
+    if(/^\/[A-Za-z]:/.test(d)) d = d.slice(1);        // windows: /C:/… -> C:/…
+    return d || null;
+  }catch(e){ return null; }
+}
+
+function level2Html(){
+  const head =
+    '<b>Level 2 — The Long Watch.</b> That was the tour. The next one is the real thing: same ship, '+
+    'same copilot, played inside <b>Claude Code</b> on a live ASCII console where <b>one real minute '+
+    'is one in-game hour</b> — the clock runs while you think. You write the actual SKILL.md and the '+
+    'actual agent file, on your own disk, and the ship refuses to let either one work until it\'s '+
+    'genuinely good. Your agent gets dispatched for real, and when it hits something over its line, '+
+    'it stops and asks you.';
+  const cmd = s => '<span class="l2cmd">'+s+'</span>';
+  const cloneCmd = 'git clone https://'+LEVEL2_REPO+'\ncd '+LEVEL2_DIR+'\nclaude\n/meridian';
+  const env = level2Env();
+
+  if(env === 'disk'){
+    const dir = diskDir();
+    return head +
+      cmd(dir ? 'cd '+esc(dir)+'\nclaude\n/meridian' : 'cd <your meridian folder>\nclaude\n/meridian') +
+      '<span class="l2note">'+
+      (dir ? 'That\'s the folder this file is sitting in. ' : '')+
+      'If you only saved this HTML and not the whole repo, grab it first: '+
+      '<code>git clone https://'+LEVEL2_REPO+'</code></span>';
+  }
+  if(env === 'local-server' && engineDetected === true){
+    return head + cmd('claude\n/meridian') +
+      '<span class="l2note">Run that from the repo you\'re serving this out of — '+
+      'the engine is already sitting right next to this file.</span>';
+  }
+  return head + cmd(cloneCmd) +
+    '<span class="l2note">Level 2 runs on your own machine: a terminal, and '+
+    '<a href="https://claude.com/claude-code" style="color:var(--clay-soft)">Claude Code</a> '+
+    'installed. Takes about a minute to set up, then ~25 to fly.</span>';
+}
 
 /* ============================================================
    STORY
@@ -575,6 +660,7 @@ finale:{ body:[
   {t:'claude', text:'If you want to do this for real — not on a fictional ship — everything you just used exists today: chat at claude.ai, Claude Code in your terminal, and skills & agents you can build yourself. Go teach it something. It learns fast. (So do you.)'},
   {t:'nar dim', text:'The console\'s light dims to a friendly idle glow. Somewhere below, a repair drone parks itself and powers down. You point the Meridian home.'},
   {t:'sys', text:'▶ VOYAGE COMPLETE'},
+  {t:'lesson', tag:'Next level', text:level2Html},
 ], end:true },
 
 };
