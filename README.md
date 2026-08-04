@@ -98,8 +98,8 @@ six hours, so you can walk away and come back.
 3. **Distress beacons start arriving** at hour 2 and land every couple of hours after,
    each carrying the same two facts: souls aboard, and hours until their life support
    collapses. Every one gets exactly one of three calls — **CRITICAL** (answer now),
-   **URGENT** (answer once the criticals clear), or **HOLD** (deliberately do nothing until
-   the criticals clear). More souls and less time means more urgent, but KEPLER-9 has 3
+   **URGENT** (answer once the criticals clear), or **ROUTINE** (do nothing for now).
+   More souls and less time means more urgent, but KEPLER-9 has 3
    souls and 2 hours while TALLOW STATION has 40 souls and 18, so where you draw the line
    is a judgment call. Work a few by hand, get bored, then write
    `.claude/skills/distress-triage/SKILL.md` and put your thresholds in it. The engine

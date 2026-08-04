@@ -132,13 +132,17 @@ Every beacon has a running clock. Nothing is ever "nominal" — a ship with no p
 broadcasting a distress call in the first place. So the question is never *whether* they're
 in trouble, only who's in the most trouble soonest.
 
-Run `beacons` — the engine prints it as a table. **Say the three calls out loud the first
-time**, because the player can't guess them:
+Run `beacons` — the engine prints it as a table, and its last line is the legend of valid
+calls. **Say the three calls out loud in chat the first time**, because the player cannot
+guess them and shouldn't have to read the template to find out:
 
 - **CRITICAL** — answer now, on the priority channel.
 - **URGENT** — answer as soon as the criticals are clear.
-- **HOLD** — deliberately do nothing until the criticals clear. This is a decision, not a
-  shrug: you're spending someone else's time to buy a better outcome elsewhere.
+- **ROUTINE** — do nothing for now; revisit once the criticals clear.
+
+Repeat the list any time the player sounds unsure of their options, and use these exact
+three words — the engine accepts nothing else (`hold` is tolerated as wording for ROUTINE,
+but don't teach it).
 
 Then state the rule once, in one line:
 

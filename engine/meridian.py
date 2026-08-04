@@ -60,8 +60,8 @@ BEACON_HOURS = (2, 4, 6, 8, 10, 13, 16, 19, 22)
 #
 # Every beacon has a running clock — a ship with nothing wrong isn't
 # broadcasting a distress call. So the rubric is two numbers, always present:
-# how many people, and how long they have. HOLD falls out of souls rather than of
-# a system being fine: a derelict on an automated loop has a countdown too,
+# how many people, and how long they have. ROUTINE falls out of souls rather than
+# of a system being fine: a derelict on an automated loop has a countdown too,
 # there's just nobody aboard to save.
 BEACON_TABLE = (
     ("KEPLER-9 RELAY",      3,  2.0, "atmosphere venting", "hull breach, venting fast"),
@@ -118,17 +118,18 @@ there is a countdown but nobody aboard to save.
 2. Classify it as one of exactly three calls, using my thresholds:
    - CRITICAL (answer now): TODO which beacons? use both numbers
    - URGENT (answer once the criticals are clear): TODO
-   - HOLD (deliberately do nothing until the criticals clear): TODO
+   - ROUTINE (do nothing for now, revisit once the criticals clear): TODO
 3. For CRITICAL, draft an immediate response and flag the captain.
 4. Log the outcome:
-   python3 engine/meridian.py triage <id> --urgency critical|urgent|hold --by skill --summary "<one line>"
+   python3 engine/meridian.py triage <id> --urgency critical|urgent|routine --by skill --summary "<one line>"
 """
 
 AGENT_TEMPLATE = """\
 ---
 name: hull-sentinel
 description: TODO one line - what job it owns unattended, and what it escalates
-tools: TODO which tools does it need? it drives the console, so Bash at minimum
+# TODO which tools does it need? it drives the console, so Bash at minimum
+tools: TODO
 model: sonnet
 ---
 
@@ -526,11 +527,11 @@ def verify_skill() -> dict:
                          "steps", "body has concrete steps",
                          "Add a numbered list of what to do, in order."))
     low = body.lower() + desc.lower()
-    # "routine" still counts so a file written before the rename stays armed.
-    checks.append(_check(sum(w in low for w in ("critical", "urgent", "hold",
-                                               "routine")) >= 2,
+    # "hold" also counts; it is accepted wording for the same call.
+    checks.append(_check(sum(w in low for w in ("critical", "urgent",
+                                               "routine", "hold")) >= 2,
                          "rubric", "body encodes your urgency rubric",
-                         "Name the categories: CRITICAL / URGENT / HOLD."))
+                         "Name the categories: CRITICAL / URGENT / ROUTINE."))
     souls = ("soul", "people", "person", "crew", "aboard", "passenger", "lives", "life sign")
     clock = ("hour", "collapse", "life support", "time", "remaining", "deadline")
     checks.append(_check(any(w in low for w in souls) and any(w in low for w in clock),
@@ -1056,20 +1057,31 @@ def cmd_beacons(args):
     print()
     for b in rows:
         print(f"  #{b['id']} {b['raw']}")
+    # Last line on purpose: whatever else scrolls past, the valid calls are the
+    # thing the player is about to need.
+    if any(not b["resolved"] for b in rows):
+        print("\n" + urgency_legend())
 
 
-URGENCIES = ("critical", "urgent", "hold")
+URGENCIES = ("critical", "urgent", "routine")
+URGENCY_HELP = (
+    ("critical", "answer now, on the priority channel"),
+    ("urgent", "answer as soon as the criticals are clear"),
+    ("routine", "do nothing for now; revisit once the criticals clear"),
+)
+
+
+def urgency_legend() -> str:
+    return "Calls: " + " · ".join(f"{n} ({d})" for n, d in URGENCY_HELP)
 
 
 def normalise_urgency(raw: str) -> str:
     u = (raw or "").strip().lower()
-    if u == "routine":            # pre-rename vocabulary; same meaning as hold
-        u = "hold"
+    if u == "hold":               # same meaning, non-canonical wording
+        u = "routine"
     if u not in URGENCIES:
         die(f"Unknown urgency {raw!r}. There are exactly three calls:\n"
-            "  critical   answer now, on the priority channel\n"
-            "  urgent     answer as soon as the criticals are clear\n"
-            "  hold       deliberately do nothing until the criticals clear", code=2)
+            + "\n".join(f"  {n:<9}  {d}" for n, d in URGENCY_HELP), code=2)
     return u.upper()
 
 
@@ -1279,7 +1291,7 @@ def main(argv=None):
     q.add_argument("id", type=int)
     # Validated in cmd_triage rather than by argparse, so a wrong value gets an
     # answer that teaches the vocabulary instead of dumping a choices list.
-    q.add_argument("--urgency", required=True, metavar="{critical,urgent,hold}")
+    q.add_argument("--urgency", required=True, metavar="{critical,urgent,routine}")
     q.add_argument("--by", required=True, choices=["skill", "manual"])
     q.add_argument("--summary", default="")
     q.set_defaults(fn=cmd_triage)
