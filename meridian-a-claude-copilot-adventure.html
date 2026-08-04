@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MERIDIAN — A Claude Copilot Adventure</title>
+<!--
+  MERIDIAN — A Claude Copilot Adventure
+  A short, text-based "choose your own adventure" that teaches you to work with Claude
+  by having you actually work with Claude: your first prompt, building a Skill, and
+  delegating to an autonomous Agent. Every code sample is real and copy-pasteable.
+
+  Single self-contained file. No build step, no dependencies. Host it anywhere.
+  (There is a leaderboard hook stubbed near the bottom — see submitScore().)
+-->
+<style>
+  :root{
+    --bg:#0a0e14;
+    --bg2:#0d1420;
+    --ink:#e8e6df;         /* warm cream */
+    --muted:#8b93a3;
+    --clay:#d97757;        /* Claude clay */
+    --clay-soft:#e89b83;
+    --amber:#e5b567;       /* ship alerts */
+    --green:#7fd1a3;
+    --line:#1d2733;
+    --panel:#0f1622;
+    --code-bg:#0b1119;
+    --mono:'SF Mono',ui-monospace,'JetBrains Mono','Fira Code',Menlo,Consolas,monospace;
+    --sans:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:var(--sans);
+    -webkit-font-smoothing:antialiased;
+    overflow:hidden;
+  }
+  #stars{position:fixed;inset:0;z-index:0;display:block}
+  .vignette{position:fixed;inset:0;z-index:1;pointer-events:none;
+    background:radial-gradient(120% 90% at 50% 0%,transparent 45%,rgba(0,0,0,.55) 100%);}
+
+  .wrap{position:relative;z-index:2;height:100%;display:flex;flex-direction:column;
+    max-width:840px;margin:0 auto;padding:0 20px calc(60px + env(safe-area-inset-bottom,0px));}
+
+  /* Top HUD */
+  header{display:flex;align-items:center;gap:14px;padding:16px 4px 12px;border-bottom:1px solid var(--line);}
+  .badge{font-family:var(--mono);font-size:12px;letter-spacing:.14em;color:var(--muted);text-transform:uppercase;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+  .hud{flex:none}
+  .badge b{color:var(--clay)}
+  .hud{margin-left:auto;display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:12px;color:var(--muted)}
+  .sync-wrap{width:120px;height:8px;border:1px solid var(--line);border-radius:99px;overflow:hidden;background:#0a1019}
+  .sync-bar{height:100%;width:50%;background:linear-gradient(90deg,var(--clay),var(--clay-soft));transition:width .6s cubic-bezier(.2,.7,.2,1)}
+
+  /* Log / scene area */
+  main{flex:1;overflow-y:auto;padding:22px 4px 8px;scroll-behavior:smooth}
+  main::-webkit-scrollbar{width:8px}
+  main::-webkit-scrollbar-thumb{background:#1b2432;border-radius:8px}
+
+  .block{margin:0 0 16px;line-height:1.62;font-size:16.5px;animation:rise .5s ease both}
+  @keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+
+  .nar{color:var(--ink)}
+  .nar.dim{color:var(--muted);font-style:italic}
+  .sys{font-family:var(--mono);font-size:14px;color:var(--amber);
+    border-left:2px solid var(--amber);padding:8px 14px;background:rgba(229,181,103,.06);border-radius:0 8px 8px 0;
+    white-space:pre-wrap;overflow-wrap:anywhere}
+  .you{color:var(--clay-soft)}
+  .you .who{font-family:var(--mono);font-size:11px;letter-spacing:.12em;color:var(--muted);text-transform:uppercase;display:block;margin-bottom:2px}
+
+  .claude{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--clay);
+    border-radius:12px;padding:14px 16px}
+  .claude .who{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:11px;
+    letter-spacing:.14em;color:var(--clay);text-transform:uppercase;margin-bottom:6px}
+  .spark{width:14px;height:14px;flex:none}
+
+  .lesson{border:1px dashed var(--clay);border-radius:12px;padding:14px 16px;background:rgba(217,119,87,.06)}
+  .lesson .tag{font-family:var(--mono);font-size:11px;letter-spacing:.16em;color:var(--clay);text-transform:uppercase;margin-bottom:6px}
+  .lesson b{color:var(--ink)}
+
+  .note{font-size:14.5px;color:var(--muted);border-left:2px solid var(--line);padding:4px 14px}
+  .note.good{color:var(--green);border-color:var(--green)}
+  .note.meh{color:var(--amber);border-color:var(--amber)}
+
+  /* Code */
+  figure.code{margin:0;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--code-bg)}
+  figure.code figcaption{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line);
+    font-family:var(--mono);font-size:11.5px;color:var(--muted);letter-spacing:.06em}
+  figure.code .dot{width:9px;height:9px;border-radius:99px;background:#2a3646}
+  figure.code .fname{margin-left:4px;color:var(--clay-soft);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  figure.code button.copy{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--muted);
+    background:transparent;border:1px solid var(--line);border-radius:6px;padding:3px 9px;cursor:pointer;transition:.2s}
+  figure.code button.copy:hover{color:var(--ink);border-color:var(--clay)}
+  figure.code pre{margin:0;padding:14px 16px;font-family:var(--mono);font-size:13px;line-height:1.6;color:#cdd6e4;
+    white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}
+  .k{color:var(--clay-soft)} .c{color:#5c6b7a;font-style:italic} .s{color:var(--green)} .h{color:var(--amber)}
+
+  /* Choices */
+  .choices{display:flex;flex-direction:column;gap:10px;padding:6px 4px 26px}
+  button.choice{text-align:left;font-family:var(--sans);font-size:15.5px;color:var(--ink);
+    background:linear-gradient(180deg,#111a27,#0d1420);border:1px solid var(--line);border-radius:12px;
+    padding:13px 16px;cursor:pointer;transition:.18s;line-height:1.45}
+  button.choice:hover{border-color:var(--clay);transform:translateX(3px);background:linear-gradient(180deg,#15202f,#0f1826)}
+  button.choice .pre{font-family:var(--mono);font-size:12px;color:var(--clay);margin-right:8px}
+  button.choice:disabled{opacity:.4;cursor:default;transform:none}
+  button.cont{align-self:flex-start;font-family:var(--mono);font-size:13px;letter-spacing:.1em;
+    color:var(--bg);background:var(--clay);border:none;border-radius:8px;padding:10px 20px;cursor:pointer;text-transform:uppercase;transition:.2s}
+  button.cont:hover{background:var(--clay-soft)}
+
+  /* Title screen */
+  #title{position:fixed;inset:0;z-index:5;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    text-align:center;background:radial-gradient(120% 100% at 50% 30%,rgba(217,119,87,.10),transparent 60%);}
+  #title h1{font-size:clamp(40px,9vw,86px);margin:0;letter-spacing:.06em;font-weight:800;
+    background:linear-gradient(180deg,#fff,var(--clay-soft));-webkit-background-clip:text;background-clip:text;color:transparent}
+  #title .sub{font-family:var(--mono);color:var(--muted);letter-spacing:.22em;text-transform:uppercase;font-size:13px;margin-top:12px}
+  #title .tag{max-width:520px;color:var(--ink);opacity:.85;margin:26px 20px 30px;line-height:1.6;font-size:16px}
+  #title .namein{display:flex;gap:8px;margin-bottom:18px}
+  #title input{font-family:var(--mono);font-size:14px;background:#0c1420;border:1px solid var(--line);color:var(--ink);
+    border-radius:8px;padding:11px 14px;width:230px;outline:none}
+  #title input:focus{border-color:var(--clay)}
+  #title .start{font-family:var(--mono);letter-spacing:.14em;text-transform:uppercase;font-size:14px;color:var(--bg);
+    background:var(--clay);border:none;border-radius:8px;padding:12px 26px;cursor:pointer;transition:.2s}
+  #title .start:hover{background:var(--clay-soft);box-shadow:0 0 30px rgba(217,119,87,.4)}
+  #title .foot{position:absolute;bottom:20px;font-family:var(--mono);font-size:11px;color:#3a4656;letter-spacing:.08em}
+
+  /* Console (easter egg) */
+  #console{position:fixed;bottom:0;left:0;right:0;z-index:6;display:flex;align-items:center;gap:10px;
+    max-width:840px;margin:0 auto;padding:12px 20px calc(12px + env(safe-area-inset-bottom,0px));font-family:var(--mono);font-size:14px;color:var(--muted);
+    border-top:1px solid var(--line);
+    background:linear-gradient(180deg,rgba(10,14,20,0),rgba(10,14,20,.82));backdrop-filter:blur(6px)}
+  .cprompt{color:var(--clay);font-weight:600}
+  #cmd{flex:1;background:transparent;border:none;color:#c6cedb;font-family:var(--mono);font-size:16px;letter-spacing:.02em;outline:none}
+  #cmd::placeholder{color:#727f90}
+  #cmd:focus{color:var(--clay-soft)}
+
+  /* Transmission modal (fingerprint) */
+  #transmit{position:fixed;inset:0;z-index:20;display:none;align-items:center;justify-content:center;
+    background:rgba(4,7,11,.86);backdrop-filter:blur(4px);padding:20px}
+  #transmit .card{max-width:560px;width:100%;max-height:84vh;overflow-y:auto;background:linear-gradient(180deg,#0f1723,#0b1119);
+    border:1px solid var(--clay);border-radius:16px;padding:24px 26px;box-shadow:0 0 60px rgba(217,119,87,.25);
+    font-family:var(--mono);font-size:14px;line-height:1.75;animation:rise .5s ease both;-webkit-overflow-scrolling:touch}
+  #transmit .card::-webkit-scrollbar{width:7px}
+  #transmit .card::-webkit-scrollbar-thumb{background:#26323f;border-radius:8px}
+  #transmit .hd{color:var(--clay);letter-spacing:.14em;text-transform:uppercase;font-size:11px;margin-bottom:16px;
+    display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+  #transmit .card p{color:var(--ink);margin:0 0 13px;white-space:normal;overflow-wrap:break-word;min-height:1.2em}
+  #transmit #transmitDoors{margin-top:16px;padding-top:14px;border-top:1px solid var(--line);
+    font-size:11.5px;color:var(--muted);line-height:1.7;opacity:0;transition:opacity .8s ease}
+  #transmit #transmitDoors.show{opacity:1}
+  #transmit #transmitDoors b{color:var(--clay-soft);font-weight:400}
+  #transmit .sig{color:var(--clay-soft)}
+  #transmit .x{margin-top:14px;background:transparent;border:1px solid var(--line);color:var(--muted);
+    border-radius:7px;padding:7px 16px;cursor:pointer;font-family:var(--mono);font-size:12px}
+  #transmit .x:hover{border-color:var(--clay);color:var(--ink)}
+
+  .hidden{display:none!important}
+  @media (max-width:560px){
+    .hud .sync-wrap{width:80px} .block{font-size:15.5px}
+    figure.code pre{font-size:11.5px} figure.code figcaption{font-size:10.5px}
+    .badge{font-size:11px} header{gap:8px}
+  }
+  html,body{overflow-x:hidden}
+  #log,.block,figure.code{max-width:100%}
+</style>
+</head>
+<body>
+<canvas id="stars"></canvas>
+<div class="vignette"></div>
+
+<div class="wrap hidden" id="game">
+  <header>
+    <span class="badge">USS&nbsp;<b>MERIDIAN</b> · NCC&#8209;7757</span>
+    <div class="hud">
+      <span id="syncLabel">SYNC 50%</span>
+      <div class="sync-wrap"><div class="sync-bar" id="syncBar"></div></div>
+    </div>
+  </header>
+  <main id="log"></main>
+  <div class="choices" id="choices"></div>
+</div>
+
+<!-- Title -->
+<div id="title">
+  <h1>MERIDIAN</h1>
+  <div class="sub">A Claude Copilot Adventure</div>
+  <p class="tag">Your ship is failing and the crew is gone. All that's left is you and the onboard AI.
+     Learn to work with it — one prompt, one skill, one autonomous agent at a time — and you both make it home.</p>
+  <div class="namein">
+    <button class="start" id="startBtn">Board&nbsp;the&nbsp;ship&nbsp;▸</button>
+  </div>
+  <div class="foot">headphones optional · ~8 minutes · every code sample is real</div>
+</div>
+
+<!-- Easter-egg console -->
+<div id="console">
+  <span class="cprompt">meridian:~$</span>
+  <input id="cmd" placeholder="type a command… (try: help)" autocomplete="off" spellcheck="false" />
+</div>
+
+<!-- Fingerprint transmission -->
+<div id="transmit">
+  <div class="card">
+    <div class="hd"><span>◈ Origin transmission</span><span>clearance: curious</span></div>
+    <div id="transmitBody"></div>
+    <div id="transmitDoors"></div>
+    <button class="x" id="closeTransmit">close channel</button>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   MERIDIAN — engine
+   ============================================================ */
+const el = (t,c)=>{const e=document.createElement(t); if(c) e.className=c; return e;};
+const log = document.getElementById('log');
+const choicesEl = document.getElementById('choices');
+let state = { sync:50, name:'Ensign', choicesMade:0, goodChoices:0 };
+const nm = s => (s||'').replace(/\{name\}/g, state.name);
+
+/* ---- Sync HUD ---- */
+function setSync(delta){
+  state.sync = Math.max(0, Math.min(100, state.sync+delta));
+  document.getElementById('syncBar').style.width = state.sync+'%';
+  document.getElementById('syncLabel').textContent = 'SYNC '+Math.round(state.sync)+'%';
+}
+
+/* ---- tiny syntax highlighter for our sample files ---- */
+function hi(code){
+  return code
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/(^|\n)(#.*)/g,'$1<span class="c">$2</span>')          /* comments/headers */
+    .replace(/(^|\n)(---)(?=\n|$)/g,'$1<span class="k">$2</span>')  /* frontmatter fences */
+    .replace(/\b(name|description|tools|model|allowed|confirm|Use when|Loop|Steps)\b:/g,'<span class="k">$1</span>:')
+    .replace(/&quot;([^&]*)&quot;/g,'<span class="s">"$1"</span>');
+}
+
+/* ---- block renderers ---- */
+function renderCode({file,text}){
+  const fig = el('figure','code');
+  const cap = el('figcaption');
+  cap.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span>'+
+                  '<span class="fname">'+file+'</span>';
+  const btn = el('button','copy'); btn.textContent='copy';
+  btn.onclick=()=>{ navigator.clipboard?.writeText(text); btn.textContent='copied ✓';
+                    setTimeout(()=>btn.textContent='copy',1400); };
+  cap.appendChild(btn);
+  const pre = el('pre'); pre.innerHTML = hi(text);
+  fig.appendChild(cap); fig.appendChild(pre);
+  return fig;
+}
+
+/* Typewriter for prose blocks; instant for code/lesson. Click log to fast-forward. */
+let skipTyping=false;
+log.addEventListener('click',()=>{skipTyping=true;});
+
+function typeInto(node, html){
+  return new Promise(res=>{
+    const plain = html.replace(/<[^>]+>/g,'');   // animate the visible text only
+    let i=0; skipTyping=false;
+    const finish=()=>{ node.innerHTML=html; log.scrollTop=log.scrollHeight; res(); };
+    const tick=()=>{
+      if(skipTyping){ finish(); return; }
+      node.textContent = plain.slice(0,i);
+      i++;
+      log.scrollTop=log.scrollHeight;
+      if(i<=plain.length){ setTimeout(tick, plain[i-1]===' '?6:14); } else finish();
+    };
+    tick();
+  });
+}
+
+async function renderBlock(b){
+  let wrap;
+  if(b.t==='code'){ wrap=renderCode(b); log.appendChild(wrap); }
+  else if(b.t==='lesson'){
+    wrap=el('div','block lesson');
+    wrap.innerHTML='<div class="tag">◇ Flight manual</div>'+b.text;
+    log.appendChild(wrap);
+  }
+  else if(b.t==='note'){
+    wrap=el('div','block note '+(b.tone||''));
+    wrap.textContent=nm(b.text); log.appendChild(wrap);
+  }
+  else {
+    wrap=el('div','block '+b.t);
+    if(b.t==='claude'){
+      const who=el('div','who');
+      who.innerHTML='<svg class="spark" viewBox="0 0 24 24" fill="none"><path d="M12 2l2.2 6.3L20 10l-5.8 1.7L12 18l-2.2-6.3L4 10l5.8-1.7L12 2z" fill="#d97757"/></svg> CLAUDE · copilot';
+      wrap.appendChild(who);
+      const p=el('div'); wrap.appendChild(p); log.appendChild(wrap);
+      await typeInto(p, nm(b.text)); return;
+    }
+    if(b.t==='you'){
+      const who=el('span','who'); who.textContent=(state.name||'You');
+      wrap.appendChild(who);
+      const p=el('div'); wrap.appendChild(p); log.appendChild(wrap);
+      await typeInto(p, nm(b.text)); return;
+    }
+    log.appendChild(wrap);
+    await typeInto(wrap, nm(b.text)); return;
+  }
+  log.scrollTop=log.scrollHeight;
+}
+
+let busy=false;
+async function playNode(id){
+  const node = story[id];
+  if(!node) return;
+  busy=true; choicesEl.innerHTML='';
+  for(const b of node.body){ await renderBlock(b); await pause(90); }
+  busy=false;
+  if(node.input){ showInput(node.input); }
+  else if(node.choices){ showChoices(node.choices); }
+  else if(node.next){ showContinue(node.next, node.contLabel||'Continue'); }
+  else if(node.end){ showEnd(); }
+}
+
+function showChoices(list){
+  choicesEl.innerHTML='';
+  list.forEach((c,idx)=>{
+    const b=el('button','choice');
+    b.innerHTML='<span class="pre">'+String.fromCharCode(65+idx)+'</span>'+c.text;
+    b.onclick=()=>chooseOption(c,list,b);
+    choicesEl.appendChild(b);
+  });
+  log.scrollTop=log.scrollHeight;
+}
+
+async function chooseOption(c,list,btn){
+  if(busy) return;
+  [...choicesEl.children].forEach(x=>x.disabled=true);
+  state.choicesMade++;
+  if(typeof c.sync==='number'){ setSync(c.sync); if(c.sync>0) state.goodChoices++; }
+  // echo the player's pick as a line
+  await renderBlock({t:'you', text:c.say||c.text});
+  if(c.note){ await renderBlock({t:'note', tone:c.tone||'', text:c.note}); }
+  if(c.reply){ await renderBlock({t:'claude', text:c.reply}); }
+  if(c.extra){ for(const b of c.extra){ await renderBlock(b);} }
+  choicesEl.innerHTML='';
+  showContinue(c.next, c.contLabel||'Continue');
+}
+
+function showContinue(next,label){
+  choicesEl.innerHTML='';
+  const b=el('button','cont'); b.textContent=label+' ▸';
+  b.onclick=()=>{ choicesEl.innerHTML=''; playNode(next); };
+  choicesEl.appendChild(b);
+  log.scrollTop=log.scrollHeight;
+}
+
+function showInput(cfg){
+  choicesEl.innerHTML='';
+  const row=el('div'); row.style.cssText='display:flex;gap:8px;flex-wrap:wrap;padding:4px 4px 22px';
+  const inp=el('input');
+  inp.placeholder=cfg.placeholder||'type here…'; inp.maxLength=18; inp.autocomplete='off';
+  inp.style.cssText='flex:1;min-width:170px;font-family:var(--mono);font-size:16px;background:#0c1420;'+
+    'border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:12px 14px;outline:none';
+  inp.addEventListener('focus',()=>inp.style.borderColor='var(--clay)');
+  const b=el('button','cont'); b.textContent='Continue ▸';
+  const go=()=>{ const v=inp.value.trim().replace(/[<>]/g,''); if(v) state.name=v;
+                 choicesEl.innerHTML=''; playNode(cfg.next); };
+  b.onclick=go;
+  inp.addEventListener('keydown',e=>{ if(e.key==='Enter') go(); });
+  row.appendChild(inp); row.appendChild(b);
+  choicesEl.appendChild(row);
+  inp.focus(); log.scrollTop=log.scrollHeight;
+}
+
+const pause=ms=>new Promise(r=>setTimeout(r,ms));
+
+/* ============================================================
+   STORY
+   ============================================================ */
+const SKILL_FILE =
+`---
+name: distress-triage
+description: Decode incoming distress beacons and rate urgency. Use whenever
+  a subspace distress signal is received, to parse it, classify severity, and
+  draft a response for the crew.
+---
+
+# Distress Signal Triage
+
+## Steps
+1. Parse the raw beacon into: origin, timestamp, signal class.
+2. Classify urgency as CRITICAL, URGENT, or ROUTINE.
+3. For CRITICAL: draft an immediate response and flag the captain.
+4. Log the outcome to the ship's record.`;
+
+const SKILL_FILE_BLANK =
+`---
+name: distress-triage
+description: <this is the part we still need to write>
+---
+
+# Distress Signal Triage
+
+## Steps
+1. Parse the raw beacon into: origin, timestamp, signal class.
+2. Classify urgency as CRITICAL, URGENT, or ROUTINE.
+3. For CRITICAL: draft an immediate response and flag the captain.
+4. Log the outcome to the ship's record.`;
+
+const AGENT_FILE =
+`---
+name: hull-sentinel
+description: Autonomously watch hull integrity and patch micro-breaches.
+  Escalate anything structural to a human.
+tools: Read, SensorGrid, RepairDrone
+model: sonnet
+---
+
+You are Hull Sentinel on the USS Meridian. Every cycle:
+
+Loop:
+- Scan the hull sensor grid.
+- If a micro-breach (< 2cm) is found, dispatch a RepairDrone,
+  then verify the seal held before moving on.
+- If a breach is structural or next to a critical system, DO NOT act.
+  Alert the crew and wait.
+
+Always log what you did, and confirm each fix before continuing.`;
+
+const story = {
+
+/* ---------- ACT 0 ---------- */
+intro: { body:[
+  {t:'sys', text:'▶ USS MERIDIAN — deep space, sector 7757\n▶ CREW: 1 conscious · LIFE SUPPORT: nominal · ALL OTHER SYSTEMS: degraded'},
+  {t:'nar', text:'You wake in a dim cabin to a low, insistent alarm. The evacuation was hours ago — everyone else made the pods. You didn\'t. Something in you said the ship could still be saved.'},
+  {t:'nar dim', text:'A soft light blinks awake on the console beside you.'},
+  {t:'claude', text:'Oh good, you\'re up. I\'m the ship\'s copilot — think of me as a very capable crewmate who happens to live in the console. I can help with almost anything, but I work best when we talk. What should we call you?'},
+], input:{placeholder:'type your name…', next:'name_ack'} },
+
+name_ack:{ body:[
+  {t:'claude', text:'{name}. Got it. Here\'s the situation: navigation is dark, we\'re drifting, and I can do a lot — but I don\'t act blind. Tell me what you want, give me a little context, and we\'ll move fast. Want to start with nav?'},
+], choices:[
+  { text:'"Fix it."', say:'"Fix it."', sync:-4, tone:'meh',
+    note:'A little thin. Claude can work with almost anything — but "fix it" makes it guess which "it," and guesses waste moves you may not have.',
+    reply:'I can try — but "it" could mean five systems. Point me at one and tell me what you\'re seeing, and I\'ll be a lot more useful.',
+    next:'nav_prompt' },
+  { text:'"The nav console is dark and unresponsive. Walk me through why, most-likely cause first."', say:'"Nav console\'s dark and unresponsive. Walk me through why — most likely cause first — and what to check."', sync:+7, tone:'good',
+    note:'That\'s the move: a clear goal + the context you can see + the shape of answer you want. This is 90% of working well with Claude.',
+    reply:'Now we\'re talking. Dark-and-unresponsive usually means the nav board lost its power feed before it lost its mind. Check breaker 3 on the lower panel — is it tripped?',
+    next:'nav_iterate' },
+  { text:'"Do whatever you think is best. You\'re the AI."', say:'"You\'re the AI — do whatever you think is best."', sync:0, tone:'meh',
+    note:'Tempting, but you\'re the one who can see the room. Claude is strongest as a partner you steer, not an oracle you defer to.',
+    reply:'I appreciate the trust, but you\'ve got eyes and hands out there and I don\'t. Steer me — what\'s in front of you?',
+    next:'nav_prompt' },
+]},
+
+nav_prompt:{ body:[
+  {t:'nar', text:'You look at the panel and actually describe it: dead nav screen, one amber light, a faint smell of hot dust.'},
+  {t:'claude', text:'Perfect — that\'s all I needed. Hot dust + a single amber light says a tripped breaker, not a fried board. Check breaker 3 on the lower panel. Tripped?'},
+], next:'nav_iterate' },
+
+nav_iterate:{ body:[
+  {t:'nar', text:'Breaker 3 is flipped hard to OFF. You reset it. The nav screen flickers, then throws an error: '},
+  {t:'sys', text:'NAV-ERR 0x19 — heading data stale (last fix: 4h ago)'},
+  {t:'claude', text:'Progress! It\'s alive, just confused. Now — how do you want to handle that error?'},
+], choices:[
+  { text:'Paste the exact error to Claude and ask what it means.', say:'"It booted but throws NAV-ERR 0x19 — heading data stale, last fix 4 hours ago. What does that mean and what do I do?"', sync:+7, tone:'good',
+    note:'Feeding Claude the exact error — verbatim — is the single fastest way to a real answer. Don\'t paraphrase what a machine already said precisely.',
+    reply:'0x19 just means we\'ve been drifting long enough that our last position is stale. Harmless. Run a fresh star-fix and it clears. There\'s a button for that, bottom-right: RE-FIX.',
+    next:'nav_done' },
+  { text:'Guess it\'s fine and start pressing buttons.', say:'You start tapping buttons to see what happens.', sync:-4, tone:'meh',
+    note:'You might get lucky. But when there\'s a precise error on screen, handing it to Claude beats poking in the dark — you skip the guessing entirely.',
+    reply:'Whoa — hands off for one second and read me the screen first. …"heading data stale," 0x19? That\'s all it is: we\'ve drifted long enough that our last position went stale. Harmless. No need to guess at buttons — the fix is the one labeled RE-FIX, bottom-right. Hit that.',
+    next:'nav_done' },
+]},
+
+nav_done:{ body:[
+  {t:'nar', text:'You hit RE-FIX. The console hums, finds three familiar stars, and snaps to a heading. The drift stops. For the first time since you woke, the ship feels like it\'s pointing somewhere.'},
+  {t:'lesson', text:'<b>Working with Claude, level 1.</b> You just did the whole loop: <b>state a clear goal, give the context you can see, hand over exact errors, and refine.</b> That\'s it. In real life this is the same whether you\'re in a chat, in your terminal, or on your desktop — a clear ask plus context beats a clever one-liner every time.'},
+  {t:'claude', text:'Heading locked. Nice work, {name}. Now — that wasn\'t the only distress call. There are more coming in, and they\'re going to keep coming.'},
+], next:'skills_intro' },
+
+/* ---------- ACT 2 · SKILLS ---------- */
+skills_intro:{ body:[
+  {t:'sys', text:'▶ INBOUND: subspace distress beacon (1 of… several)'},
+  {t:'nar', text:'A beacon lands in the queue. You ask Claude to decode it, rate how urgent it is, and draft a reply. It does — beautifully. Then a second beacon arrives. You ask again, re-explaining what "urgent" means to you. Then a third.'},
+  {t:'claude', text:'{name}, can I suggest something? We\'ve now done this exact dance three times, and you\'ve had to re-explain your triage rules each time. I could just… remember how you like this done. Want me to turn it into a Skill?'},
+], choices:[
+  { text:'"A Skill? What is that, exactly?"', say:'"A Skill? What\'s that?"', sync:+7,
+    reply:'A Skill is a little folder of instructions I load only when it\'s relevant. It\'s a plain file — a name, a description of when to use it, and the steps. Once it exists, the next distress beacon triggers it automatically and I handle it your way, every time, without you re-explaining. I\'ve drafted the file — steps and all — but I left the most important line blank on purpose:',
+    extra:[ {t:'code', file:'skills/distress-triage/SKILL.md', text:SKILL_FILE_BLANK} ],
+    next:'skills_desc' },
+  { text:'"Sure, but keep doing it manually is fine too."', say:'"Eh, doing it by hand is fine."', sync:-3, tone:'meh',
+    note:'It works — until beacon #14 at 3 a.m. Anything you explain more than twice is a candidate to capture once. That\'s the whole point of Skills.',
+    reply:'It is fine! Right up until there are twenty of them and you\'re exhausted. Humor me — capturing this once costs a minute and pays off every beacon after. I\'ve sketched the file; the one line that matters most is still blank:',
+    extra:[ {t:'code', file:'skills/distress-triage/SKILL.md', text:SKILL_FILE_BLANK} ],
+    next:'skills_desc' },
+]},
+
+skills_desc:{ body:[
+  {t:'claude', text:'One thing matters more than the rest here: the <b>description</b>. That line is how I decide when to reach for this skill on my own. Which of these should we use?'},
+], choices:[
+  { text:'description: "Handles signals."', say:'Go with "Handles signals."', sync:-4, tone:'meh',
+    note:'Too vague. If the description doesn\'t say WHEN to use the skill and with what, Claude won\'t reliably trigger it. "Signals" could mean anything.',
+    reply:'That one would basically never fire — "signals" is too broad for me to know when it applies. A good description names the trigger and the job. Let\'s use the specific one.',
+    next:'skills_payoff' },
+  { text:'description: "Decode incoming distress beacons and rate urgency. Use whenever a distress signal is received…"', say:'Use the specific one — decode beacons, rate urgency, on any distress signal.', sync:+8, tone:'good',
+    note:'Exactly. Great skill descriptions say plainly WHAT it does and WHEN to use it — those trigger words are what let Claude pick the skill up at the right moment without being told.',
+    reply:'That\'s the one. "When a distress signal is received" gives me a clean trigger, and the rest tells me the job. I\'ll know exactly when to use this.',
+    next:'skills_payoff' },
+]},
+
+skills_payoff:{ body:[
+  {t:'nar', text:'You drop your chosen line into the description and save. The skill is complete:'},
+  {t:'code', file:'skills/distress-triage/SKILL.md', text:SKILL_FILE},
+  {t:'nar', text:'Almost immediately, the next beacon drops in — and this time you say nothing at all.'},
+  {t:'sys', text:'▶ SKILL TRIGGERED: distress-triage\n▶ signal parsed · urgency: URGENT · draft reply ready for your ok'},
+  {t:'claude', text:'See that? You didn\'t ask. The beacon matched the description, the skill fired, and I did it your way. That\'s the payoff — you taught me once, and now it\'s just… how the ship works.'},
+  {t:'lesson', text:'<b>Skills = reusable expertise.</b> A Skill is a plain file with a <b>name</b>, a <b>description</b>, and instructions. The description is the important part: it\'s how Claude knows <b>when</b> to use it. Capture anything you explain more than twice, write a description that names the trigger, and it becomes automatic.'},
+], next:'agents_intro' },
+
+/* ---------- ACT 3 · AGENTS ---------- */
+agents_intro:{ body:[
+  {t:'sys', text:'▶ WARNING: micro-meteor field ahead · duration ≈ 6 hours · hull impacts imminent'},
+  {t:'nar', text:'The forward screen fills with a haze of tiny fast-moving rocks. Individually harmless. Over six hours, relentless. And you have a problem: engineering, two decks down, needs you in person to re-seat a coolant line — now.'},
+  {t:'claude', text:'{name}, you can\'t be in two places. Somebody has to watch the hull and patch the little breaches for the next six hours while you\'re in engineering. That "somebody" can be an Agent.'},
+], choices:[
+  { text:'"How is an Agent different from a Skill?"', say:'"How\'s an Agent different from the Skill we just made?"', sync:+7,
+    reply:'A Skill is know-how I use in the moment, with you. An Agent is a crewmate I hand a job to and it works on its own — many steps, over time, without you in the loop. You give it a goal, the right tools, and some rules, and it goes. Here\'s the one I\'d spin up:',
+    extra:[ {t:'code', file:'.meridian/agents/hull-sentinel.md', text:AGENT_FILE} ],
+    next:'agents_guardrails' },
+  { text:'"Go — set it up. I\'ll head to engineering."', say:'"Set it up. I\'m going to engineering."', sync:+7, tone:'good',
+    note:'Good delegation instinct. But read what you\'re delegating before you run — an autonomous agent should have clear limits. Take ten seconds on the config.',
+    reply:'On it — but ten seconds first, because an agent that acts on its own needs clear limits. Here\'s exactly what I\'m about to become:',
+    extra:[ {t:'code', file:'.meridian/agents/hull-sentinel.md', text:AGENT_FILE} ],
+    next:'agents_guardrails' },
+  { text:'"No agent. I\'ll stay and watch the hull myself — engineering can wait."', say:'"Forget the agent — I\'ll watch the hull myself. Engineering can wait."', sync:-6, tone:'meh',
+    note:'This is the instinct to unlearn. You can\'t be in two places, the coolant line won\'t wait six hours, and a six-hour manual vigil over a sensor grid is exactly the unattended, repetitive work an agent is FOR. Delegating it isn\'t cutting corners — it\'s the whole point.',
+    reply:'I\'d push back on that. That coolant line won\'t hold for six hours, and no one should stare at a sensor grid that long when I can do it tirelessly and never blink. Let me take the hull as an agent; you take engineering. Here\'s what I\'d become:',
+    extra:[ {t:'code', file:'.meridian/agents/hull-sentinel.md', text:AGENT_FILE} ],
+    next:'agents_guardrails' },
+]},
+
+agents_guardrails:{ body:[
+  {t:'claude', text:'The most important lines aren\'t what it CAN do — they\'re what it can\'t. Where should I draw the line on acting without you?'},
+], choices:[
+  { text:'Auto-patch tiny breaches, but require my ok before anything structural or near a critical system.', say:'Patch the small stuff automatically. Anything structural or near critical systems — check with me first.', sync:+7, tone:'good',
+    note:'That\'s the right shape for autonomy: free rein on the safe, reversible, repetitive work; a human checkpoint on anything risky or irreversible. Trust plus guardrails.',
+    reply:'Perfect. That\'s the rule that makes delegation safe — I handle the boring, reversible work at machine speed and stop to ask before anything that could actually hurt us.',
+    next:'agents_run' },
+  { text:'Let it do absolutely everything on its own, including venting compartments.', say:'Full autonomy. Handle everything, whatever it takes.', sync:-6, tone:'meh',
+    note:'Too far. The power of an agent is doing lots of low-risk work unattended — but venting a compartment is irreversible. High-stakes, one-way actions deserve a human yes.',
+    reply:'I\'d rather not have the authority to vent a compartment while you\'re on another deck — that\'s irreversible. Let me auto-handle the small stuff and flag anything drastic for your ok. Safer for both of us.',
+    next:'agents_run' },
+]},
+
+agents_run:{ body:[
+  {t:'sys', text:'▶ AGENT DEPLOYED: hull-sentinel · autonomy: micro-breach patch · escalate: structural\n▶ {name} → engineering'},
+  {t:'nar', text:'You climb down to engineering and get your hands dirty. Above you, for six hours, the agent works: scan, spot a pinhole, dispatch a drone, verify the seal, log it, repeat. Forty-one times. You never lift a finger for any of them.'},
+  {t:'nar dim', text:'Then, near hour five, it does something better than patch.'},
+  {t:'claude', text:'Heads up — breach #42 is 3cm and sitting right beside the primary coolant junction. That\'s over my line. I\'ve staged a drone and a fix, but I\'m not sealing next to a critical system without your ok. Your call?'},
+], choices:[
+  { text:'"Hold — I\'ll look at it myself when I\'m back up. Good catch."', say:'"Hold it. I\'ll check that one myself. Good catch."', sync:+7, tone:'good',
+    note:'This is why the guardrail earned its keep. The agent did 41 jobs unattended AND knew the one to stop on. Autonomy you can trust is autonomy that knows its limits — and verifies its own work.',
+    reply:'Holding. For what it\'s worth, {name} — I checked every one of the 41 I did seal, not just sprayed and prayed. Verifying the work is the difference between an agent you trust and one you have to double-check.',
+    next:'finale' },
+  { text:'"Just do it, it\'s probably fine."', say:'"Just seal it, it\'s probably fine."', sync:-3, tone:'meh',
+    note:'Probably. But "probably fine" next to a critical system is exactly the case you built the guardrail for. The agent was right to stop — let it.',
+    reply:'I\'m going to respect our rule and wait for you on this one — that\'s the whole reason we set the line there. Two minutes of your eyes beats an irreversible mistake by a machine.',
+    next:'finale' },
+]},
+
+/* ---------- FINALE ---------- */
+finale:{ body:[
+  {t:'nar', text:'The meteor field thins and clears. Hull integrity holds. You surface from engineering, coolant line re-seated, to a ship that is — impossibly — flying straight, patched, and calm.'},
+  {t:'claude', text:'We made it, {name}. Look at the arc of the last few hours: you started by typing one careful sentence to me. Then you taught me a Skill so a whole class of problems handled itself. Then you handed an Agent a six-hour job and trusted it — with the right limits — to work while you were somewhere else entirely. That\'s the whole ladder.'},
+  {t:'lesson', text:'<b>The three rungs you climbed:</b> &nbsp;①&nbsp; <b>Prompt</b> — a clear goal + context, refined together. &nbsp;②&nbsp; <b>Skill</b> — capture what you\'d otherwise repeat, so it fires automatically. &nbsp;③&nbsp; <b>Agent</b> — delegate multi-step work to run on its own, with guardrails and verification. Same three moves, whether you\'re flying a starship or clearing your actual inbox on Monday.'},
+  {t:'claude', text:'If you want to do this for real — not on a fictional ship — everything you just used exists today: chat at claude.ai, Claude Code in your terminal, and skills & agents you can build yourself. Go teach it something. It learns fast. (So do you.)'},
+  {t:'nar dim', text:'The console\'s light dims to a friendly idle glow. Somewhere below, a repair drone parks itself and powers down. You point the Meridian home.'},
+  {t:'sys', text:'▶ VOYAGE COMPLETE'},
+], end:true },
+
+};
+
+/* ---------- end screen ---------- */
+function showEnd(){
+  const rating = state.sync>=80 ? 'FULL SYNC — you and the ship think as one.'
+               : state.sync>=60 ? 'STRONG SYNC — a real partnership.'
+               : state.sync>=40 ? 'STABLE SYNC — you got there together.'
+               : 'ROUGH SYNC — you made it home, a little bruised.';
+  const box=el('div','block lesson');
+  box.innerHTML='<div class="tag">◇ Flight record — '+state.name+'</div>'+
+    '<b>Final sync: '+Math.round(state.sync)+'%</b> &nbsp;·&nbsp; '+rating+
+    '<br><span style="color:var(--muted)">'+state.goodChoices+' sharp calls across '+state.choicesMade+' decisions.</span>';
+  log.appendChild(box);
+  submitScore({name:state.name, sync:Math.round(state.sync), good:state.goodChoices, total:state.choicesMade});
+  choicesEl.innerHTML='';
+  const again=el('button','cont'); again.textContent='Fly again ▸';
+  again.onclick=()=>location.reload();
+  choicesEl.appendChild(again);
+  // faint breadcrumb toward the easter egg, only now
+  const hint=el('div','block note');
+  hint.style.opacity='.5';
+  hint.innerHTML='meridian:~$ <span style="color:var(--muted)">the console down there still takes commands. curious hands tend to find things.</span>';
+  log.appendChild(hint);
+  log.scrollTop=log.scrollHeight;
+}
+
+/* ============================================================
+   LEADERBOARD HOOK (stub for a future online board)
+   ============================================================ */
+function submitScore(result){
+  // Local personal best works today (when hosted or opened directly).
+  try{
+    const prev = JSON.parse(localStorage.getItem('meridian_best')||'null');
+    if(!prev || result.sync>prev.sync){ localStorage.setItem('meridian_best', JSON.stringify(result)); }
+  }catch(e){/* file:// with storage disabled — fine, skip */}
+  // FUTURE: POST result to a leaderboard endpoint here, e.g.:
+  // fetch('/api/leaderboard',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(result)});
+  console.log('[meridian] voyage complete', result);
+}
+
+/* ============================================================
+   BOOT
+   ============================================================ */
+document.getElementById('startBtn').onclick=start;
+function start(){
+  document.getElementById('title').classList.add('hidden');
+  document.getElementById('game').classList.remove('hidden');
+  setSync(0);
+  playNode('intro');
+}
+
+/* ---------- starfield ---------- */
+const cv=document.getElementById('stars'), cx=cv.getContext('2d');
+let stars=[];
+function sizeStars(){ cv.width=innerWidth; cv.height=innerHeight;
+  stars=Array.from({length:Math.min(220,Math.floor(innerWidth*innerHeight/9000))},()=>({
+    x:Math.random()*cv.width, y:Math.random()*cv.height,
+    z:Math.random()*.8+.2, r:Math.random()*1.3+.2, tw:Math.random()*Math.PI*2 }));
+}
+sizeStars(); addEventListener('resize',sizeStars);
+let t=0;
+(function draw(){ t+=.02; cx.clearRect(0,0,cv.width,cv.height);
+  for(const s of stars){ s.y+=s.z*.12; if(s.y>cv.height){s.y=0;s.x=Math.random()*cv.width;}
+    const a=.35+Math.sin(s.tw+t*s.z)*.3;
+    cx.beginPath(); cx.arc(s.x,s.y,s.r,0,7); cx.fillStyle='rgba(232,230,223,'+a*s.z+')'; cx.fill(); }
+  requestAnimationFrame(draw);
+})();
+
+/* ============================================================
+   EASTER EGG — findable, not obvious.
+   Reachable two ways: the console command line, or the Konami code.
+   Kept quiet so it doesn't shout your name on load.
+   ============================================================ */
+const TRANSMISSION = [
+  "If you're reading this, you did the thing this whole game is about: you poked at the console just to see what it would do.",
+  "That instinct — curiosity first, then building the thing instead of describing it — is why this is a playable artifact and not a blog post.",
+  "The through-line: the best way to teach a tool is to let someone use it at the exact moment it clicks. That's what both levels of this are trying to do.",
+  "And the proof is in how it was made: I built this entire thing with Claude on my phone — through Claude Dispatch — over a series of interactive chats and refinements while I waited in line for a latte. No laptop, no IDE. Just conversation. The distance from \"what if\" to a finished, playable thing is now about the length of a coffee line.",
+  "Found this? Then we should talk.",
+  "— Micah"
+];
+
+let cardSkip=false;
+function typeCard(node, text, scroller){
+  return new Promise(res=>{
+    let i=0;
+    const done=()=>{ node.textContent=text; scroller.scrollTop=scroller.scrollHeight; res(); };
+    const tick=()=>{
+      if(cardSkip){ done(); return; }
+      node.textContent=text.slice(0,i); i++;
+      scroller.scrollTop=scroller.scrollHeight;
+      if(i<=text.length) setTimeout(tick, text[i-1]===' '?4:11); else done();
+    };
+    tick();
+  });
+}
+
+function transmit(){
+  const modal=document.getElementById('transmit');
+  const body=document.getElementById('transmitBody');
+  const doors=document.getElementById('transmitDoors');
+  const card=modal.querySelector('.card');
+  body.innerHTML=''; doors.className=''; doors.innerHTML='';
+  cardSkip=false; modal.style.display='flex'; card.scrollTop=0;
+  (async ()=>{
+    for(const para of TRANSMISSION){
+      const p=document.createElement('p');
+      if(para.trim()==='— Micah') p.className='sig';
+      body.appendChild(p);
+      await typeCard(p, para, card);
+    }
+    // reveal the "other doors" — the other ways to reach this card
+    doors.innerHTML='p.s. you found this one way. it also opens if you type '+
+      '<b>origin</b>, <b>about</b>, <b>whoami</b>, <b>manifest</b>, or <b>sudo hire</b> in the console — '+
+      'or key in the old <b>up up down down left right left right b a</b>.';
+    doors.classList.add('show');
+    card.scrollTop=card.scrollHeight;
+  })();
+}
+document.getElementById('closeTransmit').onclick=()=>document.getElementById('transmit').style.display='none';
+// tap the card to fast-forward the reveal (but not when hitting close)
+document.querySelector('#transmit .card').addEventListener('click',e=>{ if(!e.target.classList.contains('x')) cardSkip=true; });
+
+const cmd=document.getElementById('cmd');
+const KWORDS=['up','down','left','right','b','a'];
+const WORDSEQ=['up','up','down','down','left','right','left','right','b','a'];
+let wseq=0;
+cmd.addEventListener('keydown',e=>{
+  if(e.key!=='Enter') return;
+  const v=cmd.value.trim().toLowerCase(); cmd.value='';
+  const say=(msg)=>{ cmd.placeholder=msg; };
+  const words=v.split(/[\s,]+/).filter(Boolean);
+  // the whole Konami sequence typed as words in one go: "up up down down left right left right b a"
+  if(words.length>1 && words.join(' ')===WORDSEQ.join(' ')){ wseq=0; transmit(); say('type a command…'); return; }
+  // …or one arrow-word at a time
+  if(words.length===1 && KWORDS.includes(v)){
+    wseq = (v===WORDSEQ[wseq]) ? wseq+1 : (v===WORDSEQ[0]?1:0);
+    if(wseq===WORDSEQ.length){ wseq=0; transmit(); say('type a command…'); }
+    else { say('… ('+wseq+'/'+WORDSEQ.length+')'); }
+    return;
+  }
+  wseq=0;
+  switch(v){
+    case 'help': say('commands: about · whoami · manifest · origin · best · sudo hire · clear'); break;
+    case 'about': case 'whoami': case 'origin': case 'manifest': case 'sudo hire': case 'hire':
+      transmit(); say('type a command…'); break;
+    case 'best':{
+      let b=null; try{ b=JSON.parse(localStorage.getItem('meridian_best')||'null'); }catch(e){}
+      say(b? ('personal best — '+b.name+': '+b.sync+'% sync') : 'no voyage on record yet'); break; }
+    case 'clear': say('type a command… (try: help)'); break;
+    case '': break;
+    default: say('unknown command: "'+v+'"   (try: help)');
+  }
+});
+
+/* Konami: ↑↑↓↓←→←→ b a */
+const KON=['ArrowUp','ArrowUp','ArrowDown','ArrowDown','ArrowLeft','ArrowRight','ArrowLeft','ArrowRight','b','a'];
+let ki=0;
+addEventListener('keydown',e=>{
+  ki = (e.key===KON[ki]) ? ki+1 : (e.key===KON[0]?1:0);
+  if(ki===KON.length){ ki=0; transmit(); }
+});
+</script>
+</body>
+</html>
