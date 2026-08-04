@@ -95,13 +95,16 @@ six hours, so you can walk away and come back.
 1. **The console is dark.** Ask your copilot why. It'll tell you about breaker 3. Flip it.
 2. **`NAV-ERR 0x19`.** Hand the copilot the exact error, not a paraphrase, and watch how
    much faster that goes. Every hour you drift pushes your arrival further out.
-3. **Distress beacons start arriving** every couple of hours, each carrying the same two
-   facts: souls aboard, and hours until their life support collapses. More souls and less
-   time means more urgent — but KEPLER-9 has 3 souls and 2 hours while TALLOW STATION has
-   40 souls and 18, so where you draw the line is a judgment call. Work a few by hand, get
-   bored, then write `.claude/skills/distress-triage/SKILL.md` and put your thresholds in
-   it. The engine refuses to let the skill resolve a beacon until the file is actually
-   good, and it checks that your rubric uses both numbers — not just that it exists.
+3. **Distress beacons start arriving** at hour 2 and land every couple of hours after,
+   each carrying the same two facts: souls aboard, and hours until their life support
+   collapses. Every one gets exactly one of three calls — **CRITICAL** (answer now),
+   **URGENT** (answer once the criticals clear), or **HOLD** (deliberately do nothing until
+   the criticals clear). More souls and less time means more urgent, but KEPLER-9 has 3
+   souls and 2 hours while TALLOW STATION has 40 souls and 18, so where you draw the line
+   is a judgment call. Work a few by hand, get bored, then write
+   `.claude/skills/distress-triage/SKILL.md` and put your thresholds in it. The engine
+   refuses to let the skill resolve a beacon until the file is actually good, and it checks
+   that your rubric uses both numbers — not just that it exists.
 4. **A micro-meteor field**, ten hours of impacts, while you're needed two decks down.
    You can't be in two places. Write `.claude/agents/hull-sentinel.md`, then watch it get
    dispatched as a genuine subagent that scans the hull, patches micro-breaches, verifies

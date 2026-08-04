@@ -50,17 +50,19 @@ SEED = 7757
 STRUCTURAL_CM = 2.0
 MICRO_HULL_COST = 1.5       # hull % per open micro-breach per hour
 STRUCT_HULL_COST = 3.0      # hull % per open structural breach per hour
-# Three beacons by hour 6, not hour 9 — the "you've explained this three times"
-# beat lands twice as fast, which is the whole reason the player wants a skill.
-BEACON_HOURS = (2, 4, 6, 9, 12, 15, 18, 21)
+# Steady every-two-hours through the whole lead-in, then every three once the
+# meteor field takes over the player's attention. The old schedule had a gap
+# between hours 6 and 9 that read as dead air right when the tedium is supposed
+# to be building toward "just write the skill."
+BEACON_HOURS = (2, 4, 6, 8, 10, 13, 16, 19, 22)
 
 # origin, souls aboard, hours to life-support collapse, cause, detail
 #
 # Every beacon has a running clock — a ship with nothing wrong isn't
 # broadcasting a distress call. So the rubric is two numbers, always present:
-# how many people, and how long they have. ROUTINE falls out of souls rather
-# than of a system being fine: a derelict on an automated loop has a countdown
-# too, there's just nobody aboard to save.
+# how many people, and how long they have. HOLD falls out of souls rather than of
+# a system being fine: a derelict on an automated loop has a countdown too,
+# there's just nobody aboard to save.
 BEACON_TABLE = (
     ("KEPLER-9 RELAY",      3,  2.0, "atmosphere venting", "hull breach, venting fast"),
     ("SV BRIGHT ANSWER",   11,  6.0, "battery failure",    "reactor scram, adrift"),
@@ -69,6 +71,24 @@ BEACON_TABLE = (
     ("MINING BARGE ODUYA",  2,  9.0, "battery failure",    "collision, power failing"),
     ("COURIER WREN",        1, 14.0, "atmosphere venting", "slow seal leak, one aboard"),
     ("BUOY 41-C",           0, 21.0, "battery failure",    "unmanned buoy, cells depleting"),
+    ("HAULER SIX PENNY",    8,  3.0, "atmosphere venting", "cargo blowout, seals failing"),
+    ("ORBITER LEM-4",      22, 11.0, "battery failure",    "solar array sheared off"),
+)
+
+# Atmosphere for hours where genuinely nothing happens, so `status` never comes
+# back empty and the ship reads as running rather than paused. Flavour only —
+# nothing here is ever actionable.
+AMBIENT = (
+    "long-range sweep: clear",
+    "coolant loop cycling normally",
+    "hull plating ticks as the ship warms through the terminator",
+    "reclaimer scrubbers holding at nominal",
+    "star tracker picks up a fresh reference and holds it",
+    "quiet enough on this deck to hear the air handlers",
+    "cargo restraints check green on deck two",
+    "long-range sweep: two contacts, both civilian and outbound",
+    "the empty crew bunks have stopped bothering you, mostly",
+    "galley coffee is four hours old and you drink it anyway",
 )
 
 METEOR_WARN_HOUR = 10
@@ -95,13 +115,13 @@ there is a countdown but nobody aboard to save.
 
 ## Steps
 1. Parse the beacon into: origin, souls aboard, hours until life-support collapse.
-2. Classify urgency using my thresholds:
-   - CRITICAL: TODO which beacons are critical? use both numbers
-   - URGENT: TODO
-   - ROUTINE: TODO
+2. Classify it as one of exactly three calls, using my thresholds:
+   - CRITICAL (answer now): TODO which beacons? use both numbers
+   - URGENT (answer once the criticals are clear): TODO
+   - HOLD (deliberately do nothing until the criticals clear): TODO
 3. For CRITICAL, draft an immediate response and flag the captain.
 4. Log the outcome:
-   python3 engine/meridian.py triage <id> --urgency <level> --by skill --summary "<one line>"
+   python3 engine/meridian.py triage <id> --urgency critical|urgent|hold --by skill --summary "<one line>"
 """
 
 AGENT_TEMPLATE = """\
@@ -290,6 +310,7 @@ def tick_hour(state: dict) -> None:
     h = state["hour"]
     s = state["sys"]
     rng = rng_for(state, h)
+    quiet_mark = len(state["log"])
 
     # ── power: the tripped breaker is still bleeding the bus
     if not s["breaker3"]:
@@ -322,6 +343,8 @@ def tick_hour(state: dict) -> None:
 
     apply_standing_watch(state, h)
     apply_decay(state, h)
+    if len(state["log"]) == quiet_mark:          # nothing happened this hour
+        logev(state, "ambient", rng.choice(AMBIENT))
     check_end(state, h)
 
 
@@ -503,9 +526,11 @@ def verify_skill() -> dict:
                          "steps", "body has concrete steps",
                          "Add a numbered list of what to do, in order."))
     low = body.lower() + desc.lower()
-    checks.append(_check(sum(w in low for w in ("critical", "urgent", "routine")) >= 2,
+    # "routine" still counts so a file written before the rename stays armed.
+    checks.append(_check(sum(w in low for w in ("critical", "urgent", "hold",
+                                               "routine")) >= 2,
                          "rubric", "body encodes your urgency rubric",
-                         "Name the categories you want, e.g. CRITICAL / URGENT / ROUTINE."))
+                         "Name the categories: CRITICAL / URGENT / HOLD."))
     souls = ("soul", "people", "person", "crew", "aboard", "passenger", "lives", "life sign")
     clock = ("hour", "collapse", "life support", "time", "remaining", "deadline")
     checks.append(_check(any(w in low for w in souls) and any(w in low for w in clock),
@@ -1033,7 +1058,23 @@ def cmd_beacons(args):
         print(f"  #{b['id']} {b['raw']}")
 
 
+URGENCIES = ("critical", "urgent", "hold")
+
+
+def normalise_urgency(raw: str) -> str:
+    u = (raw or "").strip().lower()
+    if u == "routine":            # pre-rename vocabulary; same meaning as hold
+        u = "hold"
+    if u not in URGENCIES:
+        die(f"Unknown urgency {raw!r}. There are exactly three calls:\n"
+            "  critical   answer now, on the priority channel\n"
+            "  urgent     answer as soon as the criticals are clear\n"
+            "  hold       deliberately do nothing until the criticals clear", code=2)
+    return u.upper()
+
+
 def cmd_triage(args):
+    urgency = normalise_urgency(args.urgency)
     with _Lock():
         state = refresh(load())
         b = next((x for x in state["beacons"] if x["id"] == args.id), None)
@@ -1049,11 +1090,11 @@ def cmd_triage(args):
                     "Fix the checks above, then try again.", code=3)
         b["resolved"] = True
         b["by"] = args.by
-        b["urgency"] = args.urgency.upper()
+        b["urgency"] = urgency
         logev(state, "action", f"beacon #{b['id']} triaged {b['urgency']} by {args.by}"
                                + (f": {args.summary}" if args.summary else ""))
         save(state)
-    print(f"Beacon #{args.id} logged as {args.urgency.upper()} (by {args.by}).")
+    print(f"Beacon #{args.id} logged as {urgency} (by {args.by}).")
     n = len([x for x in state["beacons"] if not x["resolved"]])
     print(f"{n} beacons still unresolved.")
 
@@ -1236,9 +1277,9 @@ def main(argv=None):
 
     q = sub.add_parser("triage", help="resolve a beacon")
     q.add_argument("id", type=int)
-    q.add_argument("--urgency", required=True,
-                   choices=["critical", "urgent", "routine",
-                            "CRITICAL", "URGENT", "ROUTINE"])
+    # Validated in cmd_triage rather than by argparse, so a wrong value gets an
+    # answer that teaches the vocabulary instead of dumping a choices list.
+    q.add_argument("--urgency", required=True, metavar="{critical,urgent,hold}")
     q.add_argument("--by", required=True, choices=["skill", "manual"])
     q.add_argument("--summary", default="")
     q.set_defaults(fn=cmd_triage)

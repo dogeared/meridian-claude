@@ -45,6 +45,13 @@ passed since the player's last message; you need to know what happened. Then nar
 the new events in character — don't paste the raw log unless they ask for it. Always
 show the console box itself; that's the dashboard they're playing on.
 
+Events tagged `ambient` are atmosphere for hours where nothing happened — coffee, air
+handlers, a clear sweep. Use them as one line of colour or drop them entirely. Never
+present them as something to act on, and never pad a turn by listing several.
+
+When there's genuinely nothing to do, say so in one short line and stop. Don't invent
+busywork, and don't ask "what would you like to do?" three different ways.
+
 The clock advances on wall time whether or not anything is running in the background.
 
 ## Offer the live console once
@@ -125,7 +132,15 @@ Every beacon has a running clock. Nothing is ever "nominal" — a ship with no p
 broadcasting a distress call in the first place. So the question is never *whether* they're
 in trouble, only who's in the most trouble soonest.
 
-Run `beacons` — the engine prints it as a table. State the rule once, in one line:
+Run `beacons` — the engine prints it as a table. **Say the three calls out loud the first
+time**, because the player can't guess them:
+
+- **CRITICAL** — answer now, on the priority channel.
+- **URGENT** — answer as soon as the criticals are clear.
+- **HOLD** — deliberately do nothing until the criticals clear. This is a decision, not a
+  shrug: you're spending someone else's time to buy a better outcome elsewhere.
+
+Then state the rule once, in one line:
 
 > More souls and less time means more urgent.
 
