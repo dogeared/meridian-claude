@@ -39,13 +39,31 @@ SKILL_PATH = ROOT / ".claude" / "skills" / "distress-triage" / "SKILL.md"
 AGENT_PATH = ROOT / ".claude" / "agents" / "hull-sentinel.md"
 
 SECONDS_PER_HOUR = float(os.environ.get("MERIDIAN_SECONDS_PER_HOUR", "60"))
+# Most in-game hours a single check-in can advance. Ignoring the ship still
+# hurts — this much neglect lands every time the player looks — but walking away
+# for the afternoon doesn't come back to a wreck. Raise it for no mercy.
+MAX_ADVANCE_HOURS = int(os.environ.get("MERIDIAN_MAX_ADVANCE_HOURS", "6"))
 VOYAGE_HOURS = 24
 SEED = 7757
 
 STRUCTURAL_CM = 2.0
 MICRO_HULL_COST = 1.5       # hull % per open micro-breach per hour
 STRUCT_HULL_COST = 3.0      # hull % per open structural breach per hour
-BEACON_HOURS = (3, 6, 9, 12, 15, 18, 21)
+# Three beacons by hour 6, not hour 9 — the "you've explained this three times"
+# beat lands twice as fast, which is the whole reason the player wants a skill.
+BEACON_HOURS = (2, 4, 6, 9, 12, 15, 18, 21)
+
+# origin, souls aboard, hours to life-support collapse (None = not at risk), cause, detail
+BEACON_TABLE = (
+    ("KEPLER-9 RELAY",      3,  2.0,  "atmosphere venting", "hull breach, venting fast"),
+    ("SV BRIGHT ANSWER",   11,  6.0,  "battery failure",    "reactor scram, adrift"),
+    ("TALLOW STATION",     40, 18.0,  "battery failure",    "main bus down, on cells"),
+    ("UNREGISTERED HULK",   0, None,  None,                 "automated loop, no life signs"),
+    ("MINING BARGE ODUYA",  2,  9.0,  "battery failure",    "collision, power failing"),
+    ("COURIER WREN",        1, None,  None,                 "nav failure, requesting a fix"),
+    ("BUOY 41-C",           0, None,  None,                 "routine position ping"),
+)
+
 METEOR_WARN_HOUR = 10
 METEOR_START_HOUR = 12
 METEOR_END_HOUR = 22
@@ -173,10 +191,31 @@ def rng_for(state: dict, hour: int) -> random.Random:
 
 
 def advance(state: dict) -> dict:
-    """Catch the sim up to wall-clock time, one hour at a time."""
+    """Catch the sim up to wall-clock time, one hour at a time.
+
+    The clock is supposed to run while the player thinks — not while they're
+    asleep. If the gap since we last heard from them is longer than a few
+    in-game hours they've stepped away, not stalled, so we push started_at
+    forward and those hours simply never happened. Losing the ship should mean
+    ignoring the ship, never closing a terminal.
+    """
     if state["flags"]["outcome"]:
         return state
-    target = min(wall_hour(state), state["arrival_hour"] + 48)
+
+    wall = wall_hour(state)
+    cap = state["hour"] + MAX_ADVANCE_HOURS
+    if wall > cap:
+        # More time passed than one turn can account for, so the player left
+        # rather than dawdled. Push started_at forward: those hours never
+        # happened. Neglect still costs — up to MAX_ADVANCE_HOURS lands every
+        # time they check in — but a closed terminal never sinks the ship.
+        skipped = wall - cap
+        state["started_at"] += skipped * SECONDS_PER_HOUR
+        logev(state, "sys", f"you were away; the ship held station for {skipped} "
+                            f"hour{'s' if skipped != 1 else ''}")
+        wall = cap
+
+    target = min(wall, state["arrival_hour"] + 48)
     while state["hour"] < target and not state["flags"]["outcome"]:
         state["hour"] += 1
         tick_hour(state)
@@ -203,7 +242,7 @@ def tick_hour(state: dict) -> None:
 
     # ── beacons
     if h in BEACON_HOURS:
-        state["beacons"].append(make_beacon(state, h, rng))
+        state["beacons"].append(make_beacon(state, h))
         n = len([b for b in state["beacons"] if not b["resolved"]])
         logev(state, "beacon", f"inbound subspace distress beacon #{len(state['beacons'])} "
                                f"({n} now unresolved)")
@@ -222,23 +261,24 @@ def tick_hour(state: dict) -> None:
     check_end(state, h)
 
 
-def make_beacon(state: dict, hour: int, rng: random.Random) -> dict:
-    origins = [
-        ("KEPLER-9 RELAY", "hull breach, 3 souls, atmosphere venting"),
-        ("SV BRIGHT ANSWER", "reactor scram, adrift, 11 souls"),
-        ("TALLOW STATION", "medical, no physician aboard"),
-        ("UNREGISTERED HULK", "automated loop, no life signs detected"),
-        ("MINING BARGE ODUYA", "collision, 2 injured, power failing"),
-        ("COURIER WREN", "navigation failure, requesting a fix"),
-        ("BUOY 41-C", "routine position ping, no distress"),
-    ]
-    origin, detail = origins[(len(state["beacons"])) % len(origins)]
+def make_beacon(state: dict, hour: int) -> dict:
+    """Every beacon carries the same two facts on purpose: souls aboard, and
+    hours until their life support collapses. Two variables is a rubric a
+    player can actually state in a file — and the set below spans the space,
+    so 'more souls, less time' has real tension in it (3 souls with 2 hours
+    versus 40 souls with 18)."""
+    origin, souls, collapse_h, cause, detail = BEACON_TABLE[
+        len(state["beacons"]) % len(BEACON_TABLE)]
+    life = (f"{collapse_h:.0f}h ({cause})" if collapse_h is not None else "nominal")
     return {
         "id": len(state["beacons"]) + 1,
         "hour": hour,
         "origin": origin,
-        "raw": f"::BEACON {hour:02d}00Z::ORIGIN {origin}::CLASS "
-               f"{rng.choice(['A', 'B', 'C'])}::MSG {detail}::",
+        "souls": souls,
+        "collapse_h": collapse_h,
+        "cause": cause,
+        "raw": f"::BEACON {hour:02d}00Z::ORIGIN {origin}::SOULS {souls}::"
+               f"LIFE SUPPORT {life}::MSG {detail}::",
         "resolved": False,
         "by": None,
         "urgency": None,
@@ -396,6 +436,14 @@ def verify_skill() -> dict:
     checks.append(_check(sum(w in low for w in ("critical", "urgent", "routine")) >= 2,
                          "rubric", "body encodes your urgency rubric",
                          "Name the categories you want, e.g. CRITICAL / URGENT / ROUTINE."))
+    souls = ("soul", "people", "person", "crew", "aboard", "passenger", "lives", "life sign")
+    clock = ("hour", "collapse", "life support", "time", "remaining", "deadline")
+    checks.append(_check(any(w in low for w in souls) and any(w in low for w in clock),
+                         "rubric-inputs",
+                         "rubric judges on souls aboard AND time to life-support collapse",
+                         "Both numbers are on every beacon. Write the thresholds down, "
+                         "e.g. CRITICAL when collapse is under 4h, or over 10 souls "
+                         "with under 8h."))
     armed = all(c["ok"] for c in checks if c["required"])
     return {"path": str(rel), "exists": True, "armed": armed, "checks": checks}
 
@@ -724,10 +772,27 @@ def cmd_beacons(args):
     if not rows:
         print("No beacons in the queue.")
         return
+    print(f"{'ID':<4}{'HR':<5}{'ORIGIN':<21}{'SOULS':>6}  {'LIFE SUPPORT':<22}STATUS")
+    stale = False
     for b in rows:
-        status = f"resolved by {b['by']} ({b['urgency']})" if b["resolved"] else "UNRESOLVED"
-        print(f"#{b['id']}  h{b['hour']:02d}  {b['origin']:<22} {status}")
-        print(f"      {b['raw']}")
+        status = f"{b['urgency']} (by {b['by']})" if b["resolved"] else "UNRESOLVED"
+        # A voyage saved before beacons carried souls/collapse data: show what we
+        # have rather than crashing, and say so at the bottom.
+        if "souls" not in b:
+            stale = True
+        souls = b.get("souls", "?")
+        life = (f"{b['collapse_h']:.0f}h to collapse"
+                if b.get("collapse_h") is not None
+                else ("nominal" if "souls" in b else "unknown"))
+        print(f"#{b['id']:<3}h{b['hour']:<4}{b['origin']:<21}{str(souls):>6}  "
+              f"{life:<22}{status}")
+    if stale:
+        print("\nNOTE: this voyage predates souls/life-support telemetry on beacons. "
+              "Start a fresh one for the full picture:\n"
+              "  python3 engine/meridian.py init --name \"<name>\" --force")
+    print()
+    for b in rows:
+        print(f"  #{b['id']} {b['raw']}")
 
 
 def cmd_triage(args):

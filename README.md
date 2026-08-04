@@ -51,15 +51,20 @@ actually run.
 ### How it plays
 
 **One real minute is one in-game hour.** The clock runs while you think. Ignore the ship
-and the ship notices.
+and the ship notices — but close the terminal and it holds station, because losing should
+mean neglecting the ship, not closing a laptop. A single check-in never advances more than
+six hours, so you can walk away and come back.
 
 1. **The console is dark.** Ask your copilot why. It'll tell you about breaker 3. Flip it.
 2. **`NAV-ERR 0x19`.** Hand the copilot the exact error, not a paraphrase, and watch how
    much faster that goes. Every hour you drift pushes your arrival further out.
-3. **Distress beacons start arriving**, one every three hours. Work a few by hand. Get
-   bored. Then write `.claude/skills/distress-triage/SKILL.md` — and the engine will
-   refuse to let the skill resolve a beacon until the file is actually good. The
-   description is the part that matters: it's how Claude knows *when* to reach for it.
+3. **Distress beacons start arriving** every couple of hours, each carrying the same two
+   facts: souls aboard, and hours until their life support collapses. More souls and less
+   time means more urgent — but KEPLER-9 has 3 souls and 2 hours while TALLOW STATION has
+   40 souls and 18, so where you draw the line is a judgment call. Work a few by hand, get
+   bored, then write `.claude/skills/distress-triage/SKILL.md` and put your thresholds in
+   it. The engine refuses to let the skill resolve a beacon until the file is actually
+   good, and it checks that your rubric uses both numbers — not just that it exists.
 4. **A micro-meteor field**, ten hours of impacts, while you're needed two decks down.
    You can't be in two places. Write `.claude/agents/hull-sentinel.md`, then watch it get
    dispatched as a genuine subagent that scans the hull, patches micro-breaches, verifies
@@ -112,8 +117,13 @@ Useful outside the game loop:
 | `debrief` | Flight record and final sync score |
 | `daemon` | Optional heartbeat; writes `.meridian/console.txt` for a live second pane |
 
-Set `MERIDIAN_SECONDS_PER_HOUR=1` to compress a 24-minute voyage into 24 seconds — handy
-for testing, ruinous for drama.
+Two knobs, both env vars:
+
+- `MERIDIAN_SECONDS_PER_HOUR=1` compresses a 24-minute voyage into 24 seconds. Handy for
+  testing, ruinous for drama. Note that a 6-hour agent watch becomes 6 seconds, so use a
+  larger value when you're testing the agent beat.
+- `MERIDIAN_MAX_ADVANCE_HOURS=999` removes the walk-away protection and lets the clock
+  catch up in full. Raise it if you want the ship to be able to sink while you're at lunch.
 
 State lives in `.meridian/state.json`. To start over:
 

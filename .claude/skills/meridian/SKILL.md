@@ -99,29 +99,73 @@ lesson: the fastest path is handing you the precise error, not a paraphrase. Exp
 then `refix`. Point out afterward what the drift cost them in hours — the console shows
 it, and it pushes their arrival time back.
 
-### Beat 3 — the beacons, and the skill (hours 3, 6, 9, …)
+### Beat 3 — the beacons, and the skill (hours 2, 4, 6, …)
 
-Beacons arrive every three hours. Work the **first three by hand**, properly: read the
-raw beacon with `beacons`, parse origin and class, classify urgency, draft a short reply,
-then `triage <id> --by manual`. Ask the player how they want urgency judged, and follow
-their rules — you're learning their preferences, out loud.
+Beacons start at hour 2 and land every couple of hours. Every one carries the same two
+facts, on purpose: **souls aboard**, and **hours until their life support collapses**
+(atmosphere venting or battery failure). Two numbers is a rule a person can actually write
+down.
 
-By the third one, you're bored and you should say so. Propose the skill:
+Run `beacons` — the engine prints it as a table. State the rule once, in one line:
 
-> We've done this exact dance three times and you've re-explained your rules each time.
-> Let me just remember how you like it. That's a Skill.
+> More souls and less time means more urgent.
 
-Then **coach them to write it themselves.** This is the heart of the level.
+Then triage the whole queue **in a single pass** and show your work as a compact table:
+id, souls, hours to collapse, your call. Ask for exactly one thing: does that match their
+instinct, or do they want the thresholds moved? Then log them with `triage --by manual`.
 
-- The file goes at `.claude/skills/distress-triage/SKILL.md`.
-- Tell them what a skill is made of: frontmatter with `name` and `description`, then the
-  steps in the body.
-- Make the **description** the lesson. It's how you decide when to reach for the skill on
-  your own. "Handles signals" never fires. It has to name the trigger and the job.
-- Let them write it. If they ask you to write it, write the frontmatter and steps but
-  **leave the description for them** — then react honestly to what they put there.
-- Run `verify skill` and read the results back. The engine checks that the description
-  names a trigger and that the body encodes their urgency rubric. Iterate until armed.
+**Do not walk the player through beacons one at a time, and do not ask them to adjudicate
+each one.** That back-and-forth is the tedium the skill exists to remove — making them
+grind through it by hand is a worse lesson than doing it briskly once. Keep this beat to
+two or three exchanges total.
+
+Note the tension out loud, because it's what makes the rule interesting: KEPLER-9 has 3
+souls and 2 hours; TALLOW STATION has 40 souls and 18 hours. Which one goes first is a
+judgment call, and it's *theirs* — that's exactly the kind of preference worth capturing
+in a file.
+
+By the third beacon you're bored, and you should say so:
+
+> That's three times I've asked you the same two questions. Let me just remember how you
+> want this judged. That's a Skill.
+
+Then coach them to write it. This is the heart of the level.
+
+**Print the scaffold — don't describe it.** Show a fenced markdown block they can paste,
+with every judgment call left blank:
+
+```markdown
+---
+name: distress-triage
+description: <you write this line — see below>
+---
+
+# Distress Signal Triage
+
+## Steps
+1. Parse the beacon into: origin, souls aboard, hours until life-support collapse.
+2. Classify urgency. More souls and less time means more urgent.
+   - CRITICAL: <your threshold>
+   - URGENT:   <your threshold>
+   - ROUTINE:  <your threshold>
+3. For CRITICAL, draft an immediate response and flag the captain.
+4. Log it:
+   python3 engine/meridian.py triage <id> --urgency <level> --by skill --summary "<one line>"
+```
+
+Then, briefly:
+
+- It goes at `.claude/skills/distress-triage/SKILL.md`.
+- The three thresholds are theirs. Numbers, not adjectives — "under 4 hours" beats "when
+  it's bad."
+- The **description** is the line that matters most, because it's how you decide when to
+  reach for this on your own. "Handles signals" would never fire. It has to name the
+  trigger and the job.
+- They can paste it into the file themselves, or give you the words and have you write it.
+  Either way **the description and the thresholds stay theirs** — write the scaffold, not
+  the judgment. Then react honestly to what they put there.
+- Run `verify skill` and read the results back. The engine checks the description names a
+  trigger, and that the rubric actually uses both souls and time. Iterate until armed.
 
 Once armed, `triage --by skill` starts working — the engine refuses `--by skill` while
 the file is unarmed, so the skill genuinely gates the mechanic. On the next beacon, use
