@@ -153,6 +153,8 @@ Useful outside the game loop:
 | `status` | Advance the clock, print the console, list what happened while you were away |
 | `log --since 12` | Raw event history |
 | `scaffold all` | Write both fill-in-the-blanks templates to disk, creating folders |
+| `worksheet skill` | Print a file with line numbers and the blanks marked |
+| `fill skill --line N --text "…"` | Replace one line by number |
 | `verify all` | Grade both of your files, check by check |
 | `scan-hull --json` | What a dispatched agent reads each cycle |
 | `debrief` | Flight record and final sync score |
@@ -180,17 +182,35 @@ python3 engine/meridian.py init --name "<name>" --force
 ```
 
 The folders are committed so you never have to `mkdir` anything. The files themselves are
-gitignored, so the next person starts with a blank page — and the game hands you a
-worksheet rather than a wall of prose about frontmatter:
+gitignored, so the next person starts with a blank page.
+
+You fill them in **from the chat, without opening an editor** — the clock is running, and
+tabbing away to another window costs in-game hours:
 
 ```sh
-python3 engine/meridian.py scaffold skill    # or: agent, all
+python3 engine/meridian.py scaffold  skill        # writes the file, creates folders
+python3 engine/meridian.py worksheet skill        # prints it with line numbers
+python3 engine/meridian.py fill      skill --line 3 --text "..."
 ```
 
-That writes the file with the structure in place and a `TODO` on every line that needs your
-judgment: your urgency thresholds, your skill's description, your agent's guardrail.
+```
+   1  ---
+   2  name: distress-triage
+   3  description: TODO one or two sentences - what this does, AND when to use it   <-- fill this in
+   ...
+  15     - CRITICAL (answer now): TODO which beacons? use both numbers              <-- fill this in
+
+Lines to fill: 3, 15, 16, 17
+```
+
+Your copilot shows you that listing and you answer by number — "line 15: under 4h to
+collapse, or over 10 souls with under 8h" — and it applies the edit. Five lines and the
+agent is armed. These are ordinary files on disk the whole time, so you can open them, keep
+them, or reuse them in another project once you're done.
+
 `verify` refuses to arm a file while any TODO is left, so the blanks are the assignment.
-It won't overwrite work you've already done unless you pass `--force`.
+`fill` refuses a line that isn't a blank (pass `--force` to revise on purpose), and
+`scaffold` won't overwrite existing work without `--force` either.
 
 They're ordinary Claude Code files. When you're done playing, they still work — and so
 does everything you learned making them, in whatever repo you open tomorrow.

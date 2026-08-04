@@ -127,8 +127,8 @@ there is a countdown but nobody aboard to save.
 AGENT_TEMPLATE = """\
 ---
 name: hull-sentinel
-description: TODO one line - what job it owns unattended, and what it escalates
-# TODO which tools does it need? it drives the console, so Bash at minimum
+description: TODO what job does it own unattended, and what does it escalate?
+# it drives the ship's console, so it needs Bash at minimum
 tools: TODO
 model: sonnet
 ---
@@ -140,9 +140,8 @@ Loop until the watch window ends:
 - Run `python3 engine/meridian.py scan-hull --json` to see every open breach.
   Each one reports its size and whether it sits beside a critical system.
 - TODO what do you do with a micro-breach? name the exact command.
-- TODO where is your line? which breaches will you NOT touch on your own, and
-  what do you do with them instead? be specific about the threshold.
-- TODO how do you confirm a seal actually held before you move on?
+- TODO which breaches will you NOT touch alone, and what do you do instead?
+- TODO how do you confirm a seal actually held before moving on?
 
 Never use --override. That flag exists so a human can authorize a structural
 patch; an agent reaching for it is the whole failure this guardrail prevents.
@@ -1220,6 +1219,80 @@ def cmd_scaffold(args):
           "python3 engine/meridian.py verify " + args.what)
 
 
+def _todo_lines(lines: "list[str]") -> "list[int]":
+    return [i + 1 for i, ln in enumerate(lines) if "TODO" in ln]
+
+
+def cmd_worksheet(args):
+    """Print the file with line numbers so it can be filled in from the chat.
+
+    The player never has to open an editor: they read numbered lines here and
+    say "line 3: ...". Keeping the numbering in the engine means it always
+    matches the bytes on disk.
+    """
+    path, _ = SCAFFOLDS[args.what]
+    rel = path.relative_to(ROOT)
+    if not path.exists():
+        die(f"{rel} does not exist yet. Run: "
+            f"python3 engine/meridian.py scaffold {args.what}")
+    lines = path.read_text().splitlines()
+    todos = _todo_lines(lines)
+    print(f"{rel}   ({len(todos)} line{'s' if len(todos) != 1 else ''} left to fill)")
+    print()
+    for i, ln in enumerate(lines, 1):
+        print(f"{i:>4}  {ln}" + ("      <-- fill this in" if "TODO" in ln else ""))
+    print()
+    if todos:
+        print("Lines to fill: " + ", ".join(str(n) for n in todos))
+        print(f'Replace one:   python3 engine/meridian.py fill {args.what} '
+              f'--line {todos[0]} --text "..."')
+    else:
+        print(f"Nothing left to fill. Run: python3 engine/meridian.py verify {args.what}")
+
+
+def cmd_fill(args):
+    """Replace one line by number. The engine does the edit so the line numbers
+    the player just read are the ones that actually change."""
+    path, _ = SCAFFOLDS[args.what]
+    rel = path.relative_to(ROOT)
+    if not path.exists():
+        die(f"{rel} does not exist yet. Run: "
+            f"python3 engine/meridian.py scaffold {args.what}")
+    lines = path.read_text().splitlines()
+    if not 1 <= args.line <= len(lines):
+        die(f"Line {args.line} is out of range; {rel} has {len(lines)} lines. "
+            f"Run `worksheet {args.what}` to see them.")
+    old = lines[args.line - 1]
+    # A stale line number from a chat transcript would silently eat real
+    # instructions — including the guardrail. Refuse unless it's a deliberate
+    # revision, and say which lines are actually open.
+    if "TODO" not in old and not args.force:
+        todos = _todo_lines(lines)
+        die(f"Line {args.line} of {rel} is not a blank to fill. It currently reads:\n"
+            f"  {old}\n\n"
+            + (f"Lines still to fill: {', '.join(str(n) for n in todos)}\n"
+               if todos else "Nothing is left to fill.\n")
+            + f"Re-run `worksheet {args.what}` for current numbers, or pass --force "
+              "to revise this line on purpose.", code=2)
+
+    lines[args.line - 1] = args.text
+    path.write_text("\n".join(lines) + "\n")
+    print(f"{rel} line {args.line}")
+    print(f"  - {old}")
+    print(f"  + {args.text}")
+    if "TODO" in args.text:
+        print("\nThat still contains the word TODO — did you mean to leave it?")
+    if "\n" in args.text:
+        print("\nNote: that replacement spans multiple lines, so every line number "
+              f"below {args.line} has shifted. Re-run `worksheet {args.what}`.")
+    left = _todo_lines(lines)
+    print()
+    if left:
+        print(f"{len(left)} left to fill: lines " + ", ".join(str(n) for n in left))
+    else:
+        print(f"All lines filled. Run: python3 engine/meridian.py verify {args.what}")
+
+
 def cmd_verify(args):
     if args.what in ("skill", "all"):
         print(render_verify(verify_skill(), "distress-triage skill"))
@@ -1323,6 +1396,18 @@ def main(argv=None):
     q.add_argument("--force", action="store_true",
                    help="overwrite an existing file with a blank template")
     q.set_defaults(fn=cmd_scaffold)
+
+    q = sub.add_parser("worksheet", help="print the file with line numbers to fill in")
+    q.add_argument("what", choices=["skill", "agent"])
+    q.set_defaults(fn=cmd_worksheet)
+
+    q = sub.add_parser("fill", help="replace one line by number")
+    q.add_argument("what", choices=["skill", "agent"])
+    q.add_argument("--line", type=int, required=True)
+    q.add_argument("--text", required=True)
+    q.add_argument("--force", action="store_true",
+                   help="revise a line that is already filled in")
+    q.set_defaults(fn=cmd_fill)
 
     q = sub.add_parser("verify", help="grade the player's skill/agent files")
     q.add_argument("what", nargs="?", default="all", choices=["skill", "agent", "all"])
