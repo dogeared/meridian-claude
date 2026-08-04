@@ -139,42 +139,32 @@ By the third beacon you're bored, and you should say so:
 
 Then coach them to write it. This is the heart of the level.
 
-**Print the scaffold — don't describe it.** Show a fenced markdown block they can paste,
-with every judgment call left blank:
+**Hand them a worksheet — don't describe a file format, and don't make them copy YAML out
+of a terminal.** Run:
 
-```markdown
----
-name: distress-triage
-description: <you write this line — see below>
----
-
-# Distress Signal Triage
-
-## Steps
-1. Parse the beacon into: origin, souls aboard, hours until life-support collapse.
-2. Classify urgency. More souls and less time means more urgent.
-   Every beacon has a countdown; 0 souls means nobody aboard to save.
-   - CRITICAL: <your threshold>
-   - URGENT:   <your threshold>
-   - ROUTINE:  <your threshold>
-3. For CRITICAL, draft an immediate response and flag the captain.
-4. Log it:
-   python3 engine/meridian.py triage <id> --urgency <level> --by skill --summary "<one line>"
+```
+python3 engine/meridian.py scaffold skill
 ```
 
-Then, briefly:
+That creates any missing folders and writes `.claude/skills/distress-triage/SKILL.md` with
+the structure already in place and a `TODO` on every line that needs their judgment. Tell
+them to open it. Then, briefly:
 
-- It goes at `.claude/skills/distress-triage/SKILL.md`.
-- The three thresholds are theirs. Numbers, not adjectives — "under 4 hours" beats "when
+- The three thresholds are theirs. Numbers, not adjectives: "under 4 hours" beats "when
   it's bad."
 - The **description** is the line that matters most, because it's how you decide when to
   reach for this on your own. "Handles signals" would never fire. It has to name the
   trigger and the job.
-- They can paste it into the file themselves, or give you the words and have you write it.
-  Either way **the description and the thresholds stay theirs** — write the scaffold, not
-  the judgment. Then react honestly to what they put there.
-- Run `verify skill` and read the results back. The engine checks the description names a
-  trigger, and that the rubric actually uses both souls and time. Iterate until armed.
+- They can fill it in themselves, or tell you their rules and have you type them in. Either
+  way **the thresholds and the description stay theirs** — you hold the pen, not the
+  judgment. Then react honestly to what they wrote.
+- Run `verify skill` and read the results back. It will not arm while a single TODO is
+  left, and it checks that the description names a trigger and the rubric uses both
+  numbers. Iterate until armed.
+
+If you ever print YAML inline instead, put the fence at the **left margin** — never nested
+in a list and never indented. Frontmatter `---` has to start at column 0 to parse, and an
+indented block is unusable when it's pasted.
 
 Once armed, `triage --by skill` starts working — the engine refuses `--by skill` while
 the file is unarmed, so the skill genuinely gates the mechanic. On the next beacon, use
@@ -203,18 +193,28 @@ Explain the difference plainly when asked: a skill is know-how you use in the mo
 with them. An agent is a crewmate you hand a job to that works on its own, many steps,
 over time, without them in the loop.
 
-Coach them to write `.claude/agents/hull-sentinel.md`:
+Same move as the skill — hand them the worksheet rather than a description:
 
-- Frontmatter: `name`, `description`, `tools` (it needs `Bash` to drive the console),
-  optionally `model`.
-- The body needs a **loop** (keep scanning until the watch ends), a **guardrail** (patch
-  micro-breaches, never structural ones or anything beside a critical system — escalate
-  those), and **self-verification** (confirm each seal held).
-- Push hard on the guardrail. The most important lines in an agent file are not what it
-  can do, they're what it won't do alone. If the player wants full autonomy including
-  structural patches, refuse in character: you'd rather not have authority to weld next
-  to a coolant junction while they're on another deck.
-- `verify agent` until armed. The engine won't dispatch an unarmed agent.
+```
+python3 engine/meridian.py scaffold agent
+```
+
+That writes `.claude/agents/hull-sentinel.md` with the frontmatter and the watch loop
+already there, and a `TODO` on each of the four decisions that are genuinely theirs: which
+tools it gets, what it does with a micro-breach, **where its line is**, and how it confirms
+a seal held.
+
+- Push hardest on the guardrail TODO. The most important lines in an agent file are not
+  what it can do, they're what it won't do alone. Tell them to be specific about the
+  threshold — "2cm or larger, or anything beside a critical system" is usable; "be careful"
+  is not.
+- If they want full autonomy including structural patches, refuse in character: you'd
+  rather not have the authority to weld next to a coolant junction while they're two decks
+  down.
+- Point out that the template already forbids `--override`, and why: that flag is how a
+  *human* authorizes a structural patch, so an agent using it defeats the whole guardrail.
+- `verify agent` until armed. It won't arm with a TODO left, and the engine won't dispatch
+  an unarmed agent.
 
 Then **actually dispatch it as a real subagent.** Run `dispatch-agent --hours 6` to open
 the watch window, then launch it with the Agent tool:

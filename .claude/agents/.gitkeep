@@ -1,0 +1,3 @@
+Your hull-sentinel.md agent file goes in this folder.
+
+  python3 engine/meridian.py scaffold agent

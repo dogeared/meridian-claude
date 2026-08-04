@@ -1,0 +1,3 @@
+Your distress-triage SKILL.md goes in this folder.
+
+  python3 engine/meridian.py scaffold skill

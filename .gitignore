@@ -1,9 +1,11 @@
 # Live game state — every voyage is a fresh one
 .meridian/
 
-# The player writes these two files themselves. That's the whole game.
-# Keeping them out of the repo means the next person starts with a blank page.
-.claude/skills/distress-triage/
+# The player writes these two files themselves. That's the whole game, so the
+# files stay out of the repo and the next person starts with a blank page.
+# The FOLDERS are committed (via .gitkeep) so nobody has to mkdir to play.
+.claude/skills/distress-triage/*
+!.claude/skills/distress-triage/.gitkeep
 .claude/agents/hull-sentinel.md
 
 __pycache__/

@@ -112,6 +112,7 @@ Useful outside the game loop:
 | --- | --- |
 | `status` | Advance the clock, print the console, list what happened while you were away |
 | `log --since 12` | Raw event history |
+| `scaffold all` | Write both fill-in-the-blanks templates to disk, creating folders |
 | `verify all` | Grade both of your files, check by check |
 | `scan-hull --json` | What a dispatched agent reads each cycle |
 | `debrief` | Flight record and final sync score |
@@ -133,12 +134,23 @@ python3 engine/meridian.py init --name "<name>" --force
 
 ### The two files you'll write
 
-Gitignored on purpose, so the next person starts with a blank page:
-
 ```
 .claude/skills/distress-triage/SKILL.md   ← Level 2, beat 3
 .claude/agents/hull-sentinel.md           ← Level 2, beat 4
 ```
+
+The folders are committed so you never have to `mkdir` anything. The files themselves are
+gitignored, so the next person starts with a blank page — and the game hands you a
+worksheet rather than a wall of prose about frontmatter:
+
+```sh
+python3 engine/meridian.py scaffold skill    # or: agent, all
+```
+
+That writes the file with the structure in place and a `TODO` on every line that needs your
+judgment: your urgency thresholds, your skill's description, your agent's guardrail.
+`verify` refuses to arm a file while any TODO is left, so the blanks are the assignment.
+It won't overwrite work you've already done unless you pass `--force`.
 
 They're ordinary Claude Code files. When you're done playing, they still work — and so
 does everything you learned making them, in whatever repo you open tomorrow.

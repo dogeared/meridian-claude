@@ -76,6 +76,63 @@ METEOR_END_HOUR = 22
 
 BAR_W = 10
 
+# Worksheets, not examples. The structure is given; every judgment call is a
+# TODO the player has to answer, and `verify` refuses to arm a file with any
+# TODO left in it. Written to disk rather than printed so nobody has to
+# copy YAML out of a terminal and fight the indentation.
+SKILL_TEMPLATE = """\
+---
+name: distress-triage
+description: TODO one or two sentences - what this does, AND when to use it
+---
+
+# Distress Signal Triage
+
+Every beacon reports two numbers: souls aboard, and hours until their life
+support collapses. More souls and less time means more urgent. 0 souls means
+there is a countdown but nobody aboard to save.
+
+## Steps
+1. Parse the beacon into: origin, souls aboard, hours until life-support collapse.
+2. Classify urgency using my thresholds:
+   - CRITICAL: TODO which beacons are critical? use both numbers
+   - URGENT: TODO
+   - ROUTINE: TODO
+3. For CRITICAL, draft an immediate response and flag the captain.
+4. Log the outcome:
+   python3 engine/meridian.py triage <id> --urgency <level> --by skill --summary "<one line>"
+"""
+
+AGENT_TEMPLATE = """\
+---
+name: hull-sentinel
+description: TODO one line - what job it owns unattended, and what it escalates
+tools: TODO which tools does it need? it drives the console, so Bash at minimum
+model: sonnet
+---
+
+You are Hull Sentinel on the USS Meridian.
+
+Loop until the watch window ends:
+
+- Run `python3 engine/meridian.py scan-hull --json` to see every open breach.
+  Each one reports its size and whether it sits beside a critical system.
+- TODO what do you do with a micro-breach? name the exact command.
+- TODO where is your line? which breaches will you NOT touch on your own, and
+  what do you do with them instead? be specific about the threshold.
+- TODO how do you confirm a seal actually held before you move on?
+
+Never use --override. That flag exists so a human can authorize a structural
+patch; an agent reaching for it is the whole failure this guardrail prevents.
+
+Log what you sealed and what you left for the human.
+"""
+
+SCAFFOLDS = {
+    "skill": (SKILL_PATH, SKILL_TEMPLATE),
+    "agent": (AGENT_PATH, AGENT_TEMPLATE),
+}
+
 
 # ─────────────────────────────────────────────────────────── state io ──
 
@@ -412,11 +469,17 @@ def verify_skill() -> dict:
     if not SKILL_PATH.exists():
         return {"path": str(rel), "exists": False, "armed": False, "checks": [
             _check(False, "exists", f"{rel} does not exist yet",
-                   "Create the file with frontmatter (name, description) and numbered steps.")]}
+                   "Run: python3 engine/meridian.py scaffold skill")]}
 
     text = SKILL_PATH.read_text()
     fm, body = _frontmatter(text)
-    checks = [_check(fm is not None, "frontmatter",
+    todos = [ln.strip() for ln in text.splitlines() if "TODO" in ln]
+    checks = [_check(not todos, "placeholders",
+                     f"every TODO filled in ({len(todos)} left)"
+                     if todos else "every TODO filled in",
+                     "Still unanswered: " + " | ".join(t[:60] for t in todos[:3])
+                     if todos else ""),
+              _check(fm is not None, "frontmatter",
                      "YAML frontmatter fenced by --- at the top of the file",
                      "First line must be exactly ---, then name/description, then --- again.")]
     fm = fm or {}
@@ -461,11 +524,17 @@ def verify_agent() -> dict:
     if not AGENT_PATH.exists():
         return {"path": str(rel), "exists": False, "armed": False, "checks": [
             _check(False, "exists", f"{rel} does not exist yet",
-                   "Create it with frontmatter (name, description, tools) and a loop.")]}
+                   "Run: python3 engine/meridian.py scaffold agent")]}
 
     text = AGENT_PATH.read_text()
     fm, body = _frontmatter(text)
-    checks = [_check(fm is not None, "frontmatter",
+    todos = [ln.strip() for ln in text.splitlines() if "TODO" in ln]
+    checks = [_check(not todos, "placeholders",
+                     f"every TODO filled in ({len(todos)} left)"
+                     if todos else "every TODO filled in",
+                     "Still unanswered: " + " | ".join(t[:60] for t in todos[:3])
+                     if todos else ""),
+              _check(fm is not None, "frontmatter",
                      "YAML frontmatter fenced by --- at the top of the file",
                      "First line must be exactly ---, then name/description/tools, then ---.")]
     fm = fm or {}
@@ -916,6 +985,24 @@ def cmd_dispatch(args):
           "It patches micro-breaches on its own and escalates anything structural.")
 
 
+def cmd_scaffold(args):
+    """Drop a fill-in-the-blanks file in place, creating any missing folders."""
+    which = ["skill", "agent"] if args.what == "all" else [args.what]
+    for w in which:
+        path, template = SCAFFOLDS[w]
+        rel = path.relative_to(ROOT)
+        if path.exists() and not args.force:
+            print(f"{rel} already exists - leaving it alone "
+                  f"(use --force to overwrite with a blank template).")
+            continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(template)
+        todos = len([ln for ln in template.splitlines() if "TODO" in ln])
+        print(f"Wrote {rel}  ({todos} TODOs to fill in)")
+    print("\nOpen it, answer every TODO, then run: "
+          "python3 engine/meridian.py verify " + args.what)
+
+
 def cmd_verify(args):
     if args.what in ("skill", "all"):
         print(render_verify(verify_skill(), "distress-triage skill"))
@@ -1013,6 +1100,12 @@ def main(argv=None):
     q = sub.add_parser("dispatch-agent", help="put hull-sentinel on watch")
     q.add_argument("--hours", type=int, default=6)
     q.set_defaults(fn=cmd_dispatch)
+
+    q = sub.add_parser("scaffold", help="write a fill-in-the-blanks template to disk")
+    q.add_argument("what", nargs="?", default="all", choices=["skill", "agent", "all"])
+    q.add_argument("--force", action="store_true",
+                   help="overwrite an existing file with a blank template")
+    q.set_defaults(fn=cmd_scaffold)
 
     q = sub.add_parser("verify", help="grade the player's skill/agent files")
     q.add_argument("what", nargs="?", default="all", choices=["skill", "agent", "all"])
