@@ -53,15 +53,21 @@ STRUCT_HULL_COST = 3.0      # hull % per open structural breach per hour
 # beat lands twice as fast, which is the whole reason the player wants a skill.
 BEACON_HOURS = (2, 4, 6, 9, 12, 15, 18, 21)
 
-# origin, souls aboard, hours to life-support collapse (None = not at risk), cause, detail
+# origin, souls aboard, hours to life-support collapse, cause, detail
+#
+# Every beacon has a running clock — a ship with nothing wrong isn't
+# broadcasting a distress call. So the rubric is two numbers, always present:
+# how many people, and how long they have. ROUTINE falls out of souls rather
+# than of a system being fine: a derelict on an automated loop has a countdown
+# too, there's just nobody aboard to save.
 BEACON_TABLE = (
-    ("KEPLER-9 RELAY",      3,  2.0,  "atmosphere venting", "hull breach, venting fast"),
-    ("SV BRIGHT ANSWER",   11,  6.0,  "battery failure",    "reactor scram, adrift"),
-    ("TALLOW STATION",     40, 18.0,  "battery failure",    "main bus down, on cells"),
-    ("UNREGISTERED HULK",   0, None,  None,                 "automated loop, no life signs"),
-    ("MINING BARGE ODUYA",  2,  9.0,  "battery failure",    "collision, power failing"),
-    ("COURIER WREN",        1, None,  None,                 "nav failure, requesting a fix"),
-    ("BUOY 41-C",           0, None,  None,                 "routine position ping"),
+    ("KEPLER-9 RELAY",      3,  2.0, "atmosphere venting", "hull breach, venting fast"),
+    ("SV BRIGHT ANSWER",   11,  6.0, "battery failure",    "reactor scram, adrift"),
+    ("TALLOW STATION",     40, 18.0, "battery failure",    "main bus down, on cells"),
+    ("UNREGISTERED HULK",   0,  4.0, "battery failure",    "automated loop, no life signs"),
+    ("MINING BARGE ODUYA",  2,  9.0, "battery failure",    "collision, power failing"),
+    ("COURIER WREN",        1, 14.0, "atmosphere venting", "slow seal leak, one aboard"),
+    ("BUOY 41-C",           0, 21.0, "battery failure",    "unmanned buoy, cells depleting"),
 )
 
 METEOR_WARN_HOUR = 10
@@ -269,7 +275,7 @@ def make_beacon(state: dict, hour: int) -> dict:
     versus 40 souls with 18)."""
     origin, souls, collapse_h, cause, detail = BEACON_TABLE[
         len(state["beacons"]) % len(BEACON_TABLE)]
-    life = (f"{collapse_h:.0f}h ({cause})" if collapse_h is not None else "nominal")
+    life = f"{collapse_h:.0f}h ({cause})"
     return {
         "id": len(state["beacons"]) + 1,
         "hour": hour,
@@ -776,14 +782,13 @@ def cmd_beacons(args):
     stale = False
     for b in rows:
         status = f"{b['urgency']} (by {b['by']})" if b["resolved"] else "UNRESOLVED"
-        # A voyage saved before beacons carried souls/collapse data: show what we
-        # have rather than crashing, and say so at the bottom.
-        if "souls" not in b:
+        # A voyage saved before every beacon carried souls and a countdown:
+        # show what we have rather than crashing, and say so at the bottom.
+        if "souls" not in b or b.get("collapse_h") is None:
             stale = True
         souls = b.get("souls", "?")
         life = (f"{b['collapse_h']:.0f}h to collapse"
-                if b.get("collapse_h") is not None
-                else ("nominal" if "souls" in b else "unknown"))
+                if b.get("collapse_h") is not None else "unknown")
         print(f"#{b['id']:<3}h{b['hour']:<4}{b['origin']:<21}{str(souls):>6}  "
               f"{life:<22}{status}")
     if stale:

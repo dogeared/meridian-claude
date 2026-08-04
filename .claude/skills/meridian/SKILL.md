@@ -102,9 +102,13 @@ it, and it pushes their arrival time back.
 ### Beat 3 — the beacons, and the skill (hours 2, 4, 6, …)
 
 Beacons start at hour 2 and land every couple of hours. Every one carries the same two
-facts, on purpose: **souls aboard**, and **hours until their life support collapses**
+numbers, on purpose: **souls aboard**, and **hours until their life support collapses**
 (atmosphere venting or battery failure). Two numbers is a rule a person can actually write
 down.
+
+Every beacon has a running clock. Nothing is ever "nominal" — a ship with no problem isn't
+broadcasting a distress call in the first place. So the question is never *whether* they're
+in trouble, only who's in the most trouble soonest.
 
 Run `beacons` — the engine prints it as a table. State the rule once, in one line:
 
@@ -119,10 +123,14 @@ each one.** That back-and-forth is the tedium the skill exists to remove — mak
 grind through it by hand is a worse lesson than doing it briskly once. Keep this beat to
 two or three exchanges total.
 
-Note the tension out loud, because it's what makes the rule interesting: KEPLER-9 has 3
-souls and 2 hours; TALLOW STATION has 40 souls and 18 hours. Which one goes first is a
-judgment call, and it's *theirs* — that's exactly the kind of preference worth capturing
-in a file.
+Two tensions worth naming out loud, because they're what make the rule a judgment call
+rather than arithmetic:
+
+- KEPLER-9 has 3 souls and 2 hours; TALLOW STATION has 40 souls and 18. Which goes first
+  is genuinely theirs to decide.
+- Some beacons report **0 souls** — a derelict on an automated loop, an unmanned buoy
+  running its cells down. There's still a countdown, but nobody aboard to save. That's
+  what ROUTINE is for, and it's cleaner than judging it on whether a system is fine.
 
 By the third beacon you're bored, and you should say so:
 
@@ -145,6 +153,7 @@ description: <you write this line — see below>
 ## Steps
 1. Parse the beacon into: origin, souls aboard, hours until life-support collapse.
 2. Classify urgency. More souls and less time means more urgent.
+   Every beacon has a countdown; 0 souls means nobody aboard to save.
    - CRITICAL: <your threshold>
    - URGENT:   <your threshold>
    - ROUTINE:  <your threshold>
