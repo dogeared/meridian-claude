@@ -87,6 +87,11 @@
     padding:10px 12px;white-space:pre;overflow-x:auto;letter-spacing:.02em}
   .l2note{display:block;margin-top:10px;font-size:13px;color:var(--muted);line-height:1.55}
   .l2note code{font-family:var(--mono);font-size:12px;color:var(--clay-soft)}
+  /* Same link treatment as the transmission card, so a URL reads as clickable
+     wherever it shows up — including inside the copy-paste command block. */
+  .l2note a,.l2cmd a{color:var(--clay-soft);text-decoration:none;
+    border-bottom:1px solid rgba(232,155,131,.4)}
+  .l2note a:hover,.l2cmd a:hover{color:var(--ink);border-bottom-color:var(--clay)}
 
   .note{font-size:14.5px;color:var(--muted);border-left:2px solid var(--line);padding:4px 14px}
   .note.good{color:var(--green);border-color:var(--green)}
@@ -437,7 +442,11 @@ function level2Html(){
     'genuinely good. Your agent gets dispatched for real, and when it hits something over its line, '+
     'it stops and asks you.';
   const cmd = s => '<span class="l2cmd">'+s+'</span>';
-  const cloneCmd = 'git clone https://'+LEVEL2_REPO+'\ncd '+LEVEL2_DIR+'\nclaude\n/meridian';
+  /* The repo URL is printed in more than one branch below; keep it one anchor so
+     every variation is clickable and they can't drift apart. */
+  const repoLink = '<a href="https://'+LEVEL2_REPO+'" target="_blank" rel="noopener">'+
+                   'https://'+LEVEL2_REPO+'</a>';
+  const cloneCmd = 'git clone '+repoLink+'\ncd '+LEVEL2_DIR+'\nclaude\n/meridian';
   const env = level2Env();
 
   if(env === 'disk'){
@@ -447,7 +456,7 @@ function level2Html(){
       '<span class="l2note">'+
       (dir ? 'That\'s the folder this file is sitting in. ' : '')+
       'If you only saved this HTML and not the whole repo, grab it first: '+
-      '<code>git clone https://'+LEVEL2_REPO+'</code></span>';
+      '<code>git clone '+repoLink+'</code></span>';
   }
   if(env === 'local-server' && engineDetected === true){
     return head + cmd('claude\n/meridian') +
@@ -628,7 +637,7 @@ agents_intro:{ body:[
 ]},
 
 agents_guardrails:{ body:[
-  {t:'claude', text:'The most important lines aren\'t what it CAN do — they\'re what it can\'t. Where should I draw the line on acting without you?'},
+  {t:'claude', text:'The most important lines aren\'t what it can do — they\'re what it CAN\'T. Where should I draw the line on acting without you?'},
 ], choices:[
   { text:'Auto-patch tiny breaches, but require my ok before anything structural or near a critical system.', say:'Patch the small stuff automatically. Anything structural or near critical systems — check with me first.', sync:+7, tone:'good',
     note:'That\'s the right shape for autonomy: free rein on the safe, reversible, repetitive work; a human checkpoint on anything risky or irreversible. Trust plus guardrails.',
@@ -745,7 +754,7 @@ let t=0;
 const TRANSMISSION = [
   { t:"If you're reading this, you did the thing this whole game is about: you poked at the console just to see what it would do." },
   { t:"That instinct — curiosity first, then building the thing instead of describing it — is why this is a playable artifact and not a blog post." },
-  { t:"I've spent about a decade building things that teach builders:" },
+  { t:"I've spent my 35-year career building and securing things that teach builders. Here's what the last decade has looked like:" },
   { cls:'tb',
     t:"▸ Okta, 4.5 years — I designed and built the developer curriculum, helped author the Okta Developer Certification, contributed to the Okta CLI, and built a stack of developer challenges." },
   { cls:'tb',
@@ -758,9 +767,10 @@ const TRANSMISSION = [
   { cls:'tb',
     t:"▸ And always — I build apps and tutorials to help other builders learn." },
   { t:"The through-line: the best way to teach a tool is to let someone use it at the exact moment it clicks. That's what both levels of this are trying to do." },
-  { t:"And the proof is in how it was made: I built this entire thing with Claude on my phone — through Claude Dispatch — over a series of interactive chats and refinements while I waited in line for a latte. No laptop, no IDE. Just conversation. The distance from \"what if\" to a finished, playable thing is now about the length of a coffee line." },
+  { t:"And the proof is in how this was made: I built this entire thing with Claude on my phone — through Claude Dispatch — over a series of interactive chats and refinements while I waited in line for a latte. No laptop, no IDE. Just conversation. The distance from \"what if\" to a finished, playable thing is now about the length of a coffee line." },
   { t:"Found this? Then we should talk." },
-  { cls:'sig', t:"— Micah" }
+  { cls:'sig', t:"— Micah",
+    html:"— <a href=\"https://linkedin.com/in/micahsilverman\" target=\"_blank\" rel=\"noopener\">Micah</a>" }
 ];
 
 let cardSkip=false;
@@ -773,7 +783,7 @@ function typeCard(node, text, scroller, html){
       if(cardSkip){ done(); return; }
       node.textContent=text.slice(0,i); i++;
       scroller.scrollTop=scroller.scrollHeight;
-      if(i<=text.length) setTimeout(tick, text[i-1]===' '?4:11); else done();
+      if(i<=text.length) setTimeout(tick, text[i-1]===' '?7:19); else done();
     };
     tick();
   });
@@ -787,12 +797,18 @@ function transmit(){
   body.innerHTML=''; doors.className=''; doors.innerHTML='';
   cardSkip=false; modal.style.display='flex'; card.scrollTop=0;
   (async ()=>{
+    let first=true;
     for(const para of TRANSMISSION){
+      // A beat between paragraphs so each one lands instead of running on.
+      // Skipped entirely once the reader taps to fast-forward.
+      if(!first && !cardSkip) await pause(500);
+      first=false;
       const p=document.createElement('p');
       if(para.cls) p.className=para.cls;
       body.appendChild(p);
       await typeCard(p, para.t, card, para.html);
     }
+    if(!cardSkip) await pause(700);
     // reveal the "other doors" — the other ways to reach this card
     doors.innerHTML='p.s. you found this one way. it also opens if you type '+
       '<b>origin</b>, <b>about</b>, <b>whoami</b>, <b>manifest</b>, or <b>sudo hire</b> in the console — '+
