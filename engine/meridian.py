@@ -25,6 +25,7 @@ import json
 import os
 import random
 import re
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -645,6 +646,169 @@ def dashboard(state: dict) -> str:
     return "\n".join(lines)
 
 
+# ──────────────────────────────────────────────────────── live console ──
+#
+# A redrawing console for a second pane. The Claude Code transcript is
+# append-only, so an in-place dashboard can't live there — this does, beside it.
+#
+# Read-only on purpose: it never advances the sim. If it ticked the clock every
+# second it would also defeat MAX_ADVANCE_HOURS, and leaving this window open
+# overnight would sink the ship. Instead it shows what the NEXT check-in will
+# apply, so the pressure is visible without being applied behind your back.
+
+C_DIM, C_CLAY, C_AMBER, C_GREEN, C_RED, C_INK = 244, 209, 179, 114, 167, 253
+ALT_ON, ALT_OFF = "\033[?1049h\033[?25l", "\033[?1049l\033[?25h"
+
+
+def _paint(text: str, color: int = None) -> str:
+    return f"\033[38;5;{color}m{text}\033[0m" if color else text
+
+
+def _cell(text: str, width: int, color: int = None) -> str:
+    """Pad on the plain text, colour after, so alignment survives escapes."""
+    return _paint(text[:width].ljust(width), color)
+
+
+def gauge(pct: float, width: int) -> "tuple[str, int]":
+    filled = int(round(max(0.0, min(100.0, pct)) / 100 * width))
+    color = C_GREEN if pct > 60 else (C_AMBER if pct > 30 else C_RED)
+    return "█" * filled + "░" * (width - filled), color
+
+
+def _file_status(report: dict) -> "tuple[str, int]":
+    """Three states worth telling apart at a glance: nothing there, a draft with
+    blanks left, or armed and working."""
+    if not report["exists"]:
+        return "NOT WRITTEN", C_DIM
+    if report["armed"]:
+        return "ARMED", C_GREEN
+    todo = next((c for c in report["checks"]
+                 if c["id"] == "placeholders" and not c["ok"]), None)
+    if todo:
+        n = re.search(r"\((\d+) left\)", todo["msg"])
+        return (f"DRAFT · {n.group(1)} TODO left" if n else "DRAFT"), C_AMBER
+    failed = [c for c in report["checks"] if c["required"] and not c["ok"]]
+    return f"DRAFT · {len(failed)} check(s) failing", C_AMBER
+
+
+def console_frame(state: dict, width: int) -> "list[str]":
+    s, f = state["sys"], state["flags"]
+    inner = width - 4
+    openb = [b for b in state["breaches"] if not b["patched"]]
+    struct = [b for b in openb if is_structural(b)]
+    unres = [b for b in state["beacons"] if not b["resolved"]]
+
+    # What the next check-in will apply — visible, but not applied here.
+    pending = 0
+    if not f["outcome"]:
+        pending = max(0, min(wall_hour(state),
+                             state["hour"] + MAX_ADVANCE_HOURS) - state["hour"])
+
+    top = "╔" + "═" * (width - 2) + "╗"
+    sep = "╠" + "═" * (width - 2) + "╣"
+    bot = "╚" + "═" * (width - 2) + "╝"
+    rows = [top]
+
+    def row(content: str):
+        rows.append("║ " + content + " ║")
+
+    title = _cell("USS MERIDIAN · NCC-7757", 26, C_CLAY)
+    clock = _cell(f"HOUR {state['hour']:02d}/{state['arrival_hour']:02d}", 14, C_INK)
+    pend = _cell(f"+{pending}h pending" if pending else "up to date",
+                 inner - 40, C_AMBER if pending else C_DIM)
+    row(title + clock + pend)
+    rows.append(sep)
+
+    nav = ("ONLINE" if s["nav_online"] and not s["nav_err"]
+           else ("FAULT" if s["nav_online"] else "OFFLINE"))
+    nav_c = C_GREEN if nav == "ONLINE" else (C_AMBER if nav == "FAULT" else C_RED)
+    brk = "[ ON  ]" if s["breaker3"] else "[ OFF ]"
+    row(_cell("NAV", 10, C_DIM) + _cell(nav, 16, nav_c) +
+        _cell("BREAKER 3", 12, C_DIM) +
+        _cell(brk, inner - 38, C_GREEN if s["breaker3"] else C_RED))
+
+    gw = max(10, min(24, inner - 30))
+    for label, val in (("HULL", s["hull"]), ("O2", s["o2"]), ("POWER", s["power"])):
+        bar_s, bar_c = gauge(val, gw)
+        row(_cell(label, 10, C_DIM) + _paint(bar_s, bar_c) +
+            _cell(f" {val:5.1f}%", inner - 10 - gw, C_INK))
+    row(_cell("DRIFT", 10, C_DIM) +
+        _cell(f"{s['drift']:.2f}h off course", inner - 10, C_INK))
+    rows.append(sep)
+
+    b_txt = f"{len(openb)} open" + (f" ({len(struct)} STRUCTURAL)" if struct else "")
+    row(_cell("BREACHES", 10, C_DIM) + _cell(b_txt, 26, C_RED if struct else C_INK) +
+        _cell("BEACONS", 9, C_DIM) +
+        _cell(f"{len(unres)} unresolved", inner - 45,
+              C_AMBER if unres else C_GREEN))
+
+    skill_txt, skill_c = _file_status(verify_skill())
+    agent_report = verify_agent()
+    until = f["agent_watch_until"]
+    if until is not None and until >= state["hour"]:
+        agent_txt, agent_c = f"STANDING WATCH (thru h{until})", C_GREEN
+    else:
+        agent_txt, agent_c = _file_status(agent_report)
+    row(_cell("SKILL", 10, C_DIM) + _cell(skill_txt, 26, skill_c) +
+        _cell("AGENT", 9, C_DIM) + _cell(agent_txt, inner - 45, agent_c))
+
+    alerts = []
+    if not s["breaker3"]:
+        alerts.append(("NAV CONSOLE DARK — no power at the board", C_RED))
+    if s["nav_err"]:
+        alerts.append((s["nav_err"], C_AMBER))
+    for b in struct:
+        near = " beside coolant junction" if b["critical_adjacent"] else ""
+        state_txt = "ESCALATED — awaiting your call" if b["escalated"] else "UNATTENDED"
+        alerts.append((f"STRUCTURAL breach #{b['id']} {b['size_cm']}cm{near} — "
+                       f"{state_txt}", C_RED))
+    if f["outcome"]:
+        alerts.append(({"home": "VOYAGE COMPLETE",
+                        "hull": "HULL FAILURE — VOYAGE LOST",
+                        "o2": "LIFE SUPPORT LOST — VOYAGE LOST"}[f["outcome"]],
+                       C_GREEN if f["outcome"] == "home" else C_RED))
+    if alerts:
+        rows.append(sep)
+        for text, color in alerts[:5]:
+            row(_cell("▲ " + text, inner, color))
+
+    rows.append(sep)
+    tail = state["log"][-6:]
+    for e in tail:
+        color = {"impact": C_RED, "fatal": C_RED, "advisory": C_AMBER,
+                 "action": C_GREEN, "beacon": C_CLAY}.get(e["kind"], C_DIM)
+        row(_cell(f"h{e['hour']:02d}  {e['text']}", inner, color))
+    for _ in range(6 - len(tail)):
+        row(_cell("", inner))
+    rows.append(bot)
+    return rows
+
+
+def cmd_console(args):
+    """Redrawing console for a second terminal pane. Ctrl-C to exit."""
+    out = sys.stdout
+    out.write(ALT_ON)
+    try:
+        while True:
+            width = max(66, min(110, shutil.get_terminal_size((80, 24)).columns))
+            state = load()
+            frame = console_frame(state, width)
+            hint = ("Ctrl-C to close · this view never changes the game · "
+                    "talk to your copilot to advance the clock")
+            out.write("\033[H")                       # home, then repaint
+            for line in frame:
+                out.write(line + "\033[K\n")
+            out.write(_paint(hint[:width], C_DIM) + "\033[K\n")
+            out.write("\033[J")                       # clear anything below
+            out.flush()
+            time.sleep(args.interval)
+    except (KeyboardInterrupt, BrokenPipeError):
+        pass
+    finally:
+        out.write(ALT_OFF)
+        out.flush()
+
+
 def render_new_events(state: dict) -> str:
     since = state["last_seen_hour"]
     fresh = [e for e in state["log"] if e["hour"] > since]
@@ -1117,7 +1281,12 @@ def main(argv=None):
     q = sub.add_parser("debrief", help="flight record and final sync score")
     q.set_defaults(fn=cmd_debrief)
 
-    q = sub.add_parser("daemon", help="optional clock heartbeat")
+    q = sub.add_parser("console", help="live redrawing console for a second pane")
+    q.add_argument("--interval", type=float, default=1.0)
+    q.set_defaults(fn=cmd_console)
+
+    q = sub.add_parser("daemon", help="clock heartbeat; NOTE this one does advance "
+                                      "the sim, so don't leave it running unattended")
     q.add_argument("--interval", type=float, default=5.0)
     q.set_defaults(fn=cmd_daemon)
 

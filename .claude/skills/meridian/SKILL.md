@@ -46,9 +46,24 @@ the new events in character — don't paste the raw log unless they ask for it. 
 show the console box itself; that's the dashboard they're playing on.
 
 The clock advances on wall time whether or not anything is running in the background.
-If the player wants a live second pane, they can run
-`python3 engine/meridian.py daemon` in another terminal and `watch -n1 cat
-.meridian/console.txt` — but never start the daemon unless they ask.
+
+## Offer the live console once
+
+This transcript scrolls — it can't repaint a fixed dashboard, because a conversation is
+append-only. Some players would rather watch a console that redraws in place. Mention this
+**once**, right after `init`, in one line, then drop it:
+
+```
+python3 engine/meridian.py console
+```
+
+Run in a second terminal pane, it redraws about once a second: gauges, alerts, the state of
+both their files, and the last few events. It is read-only and never advances the clock, so
+it's safe to leave open — only talking to you moves the ship. It also shows `+Nh pending`,
+which is exactly how many hours your next `status` will apply.
+
+Do not start it yourself, and don't offer the `daemon` command instead — that one *does*
+advance the sim, so leaving it running unattended can sink the ship.
 
 ## Voice
 

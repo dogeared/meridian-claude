@@ -48,6 +48,43 @@ actually run.
 +------------------------------------------------------------------+
 ```
 
+### The live console
+
+The chat transcript scrolls, because a conversation is append-only. If you'd rather watch a
+console that redraws in place, run this in a second terminal pane:
+
+```sh
+python3 engine/meridian.py console
+```
+
+```
+╔════════════════════════════════════════════════════════════════════════════╗
+║ USS MERIDIAN · NCC-7757   HOUR 16/32    +2h pending                        ║
+╠════════════════════════════════════════════════════════════════════════════╣
+║ NAV       FAULT           BREAKER 3   [ ON  ]                              ║
+║ HULL      █████████████████████░░░  88.0%                                  ║
+║ O2        ████████████████████████ 100.0%                                  ║
+║ POWER     █████████░░░░░░░░░░░░░░░  36.0%                                  ║
+║ DRIFT     8.00h off course                                                 ║
+╠════════════════════════════════════════════════════════════════════════════╣
+║ BREACHES  4 open (1 STRUCTURAL)     BEACONS  6 unresolved                  ║
+║ SKILL     DRAFT · 4 TODO left       AGENT    STANDING WATCH (thru h22)     ║
+╠════════════════════════════════════════════════════════════════════════════╣
+║ ▲ STRUCTURAL breach #4 3.1cm beside coolant junction — UNATTENDED          ║
+╠════════════════════════════════════════════════════════════════════════════╣
+║ h16  impact: breach #4 at 3.1cm (STRUCTURAL)                               ║
+║ h16  breaker 3 reset; nav board boots and throws NAV-ERR 0x19              ║
+╚════════════════════════════════════════════════════════════════════════════╝
+```
+
+Colour-coded gauges, live alerts, the state of both your files, and a tail of recent events.
+It's **read-only** — it never advances the clock, so it's safe to leave open all session.
+`+Nh pending` tells you how many in-game hours your next exchange with the copilot will
+apply. Ctrl-C restores your shell. Adapts to terminal width from 66 to 110 columns.
+
+Don't use `daemon` for this. That one does advance the sim, so leaving it unattended can
+sink the ship.
+
 ### How it plays
 
 **One real minute is one in-game hour.** The clock runs while you think. Ignore the ship
