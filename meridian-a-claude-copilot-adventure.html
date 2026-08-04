@@ -158,6 +158,10 @@
     font-size:11.5px;color:var(--muted);line-height:1.7;opacity:0;transition:opacity .8s ease}
   #transmit #transmitDoors.show{opacity:1}
   #transmit #transmitDoors b{color:var(--clay-soft);font-weight:400}
+  #transmit .card p.tb{padding-left:1.15em;text-indent:-1.15em;margin:0 0 10px;
+    color:var(--ink);opacity:.95}
+  #transmit .card a{color:var(--clay-soft);text-decoration:none;border-bottom:1px solid rgba(232,155,131,.4)}
+  #transmit .card a:hover{color:var(--ink);border-bottom-color:var(--clay)}
   #transmit .sig{color:var(--clay-soft)}
   #transmit .x{margin-top:14px;background:transparent;border:1px solid var(--line);color:var(--muted);
     border-radius:7px;padding:7px 16px;cursor:pointer;font-family:var(--mono);font-size:12px}
@@ -736,20 +740,35 @@ let t=0;
    Reachable two ways: the console command line, or the Konami code.
    Kept quiet so it doesn't shout your name on load.
    ============================================================ */
+/* Each entry types out as plain text. `html` is swapped in once the line
+   finishes, which is how the links survive a textContent typewriter. */
 const TRANSMISSION = [
-  "If you're reading this, you did the thing this whole game is about: you poked at the console just to see what it would do.",
-  "That instinct — curiosity first, then building the thing instead of describing it — is why this is a playable artifact and not a blog post.",
-  "The through-line: the best way to teach a tool is to let someone use it at the exact moment it clicks. That's what both levels of this are trying to do.",
-  "And the proof is in how it was made: I built this entire thing with Claude on my phone — through Claude Dispatch — over a series of interactive chats and refinements while I waited in line for a latte. No laptop, no IDE. Just conversation. The distance from \"what if\" to a finished, playable thing is now about the length of a coffee line.",
-  "Found this? Then we should talk.",
-  "— Micah"
+  { t:"If you're reading this, you did the thing this whole game is about: you poked at the console just to see what it would do." },
+  { t:"That instinct — curiosity first, then building the thing instead of describing it — is why this is a playable artifact and not a blog post." },
+  { t:"I've spent about a decade building things that teach builders:" },
+  { cls:'tb',
+    t:"▸ Okta, 4.5 years — I designed and built the developer curriculum, helped author the Okta Developer Certification, contributed to the Okta CLI, and built a stack of developer challenges." },
+  { cls:'tb',
+    t:"▸ Snyk, the last 5 years — I co-authored the Snyk Bug Bash (acceleration.snykchallenge.io) and designed and built the AI Security Engineer Foundations certificate program (aisecurity.engineer).",
+    html:"▸ Snyk, the last 5 years — I co-authored the "+
+         "<a href=\"https://acceleration.snykchallenge.io\" target=\"_blank\" rel=\"noopener\">Snyk Bug Bash</a> "+
+         "and designed and built the "+
+         "<a href=\"https://aisecurity.engineer\" target=\"_blank\" rel=\"noopener\">AI Security Engineer Foundations</a> "+
+         "certificate program." },
+  { cls:'tb',
+    t:"▸ And always — I build apps and tutorials to help other builders learn." },
+  { t:"The through-line: the best way to teach a tool is to let someone use it at the exact moment it clicks. That's what both levels of this are trying to do." },
+  { t:"And the proof is in how it was made: I built this entire thing with Claude on my phone — through Claude Dispatch — over a series of interactive chats and refinements while I waited in line for a latte. No laptop, no IDE. Just conversation. The distance from \"what if\" to a finished, playable thing is now about the length of a coffee line." },
+  { t:"Found this? Then we should talk." },
+  { cls:'sig', t:"— Micah" }
 ];
 
 let cardSkip=false;
-function typeCard(node, text, scroller){
+function typeCard(node, text, scroller, html){
   return new Promise(res=>{
     let i=0;
-    const done=()=>{ node.textContent=text; scroller.scrollTop=scroller.scrollHeight; res(); };
+    const done=()=>{ if(html){ node.innerHTML=html; } else { node.textContent=text; }
+                     scroller.scrollTop=scroller.scrollHeight; res(); };
     const tick=()=>{
       if(cardSkip){ done(); return; }
       node.textContent=text.slice(0,i); i++;
@@ -770,9 +789,9 @@ function transmit(){
   (async ()=>{
     for(const para of TRANSMISSION){
       const p=document.createElement('p');
-      if(para.trim()==='— Micah') p.className='sig';
+      if(para.cls) p.className=para.cls;
       body.appendChild(p);
-      await typeCard(p, para, card);
+      await typeCard(p, para.t, card, para.html);
     }
     // reveal the "other doors" — the other ways to reach this card
     doors.innerHTML='p.s. you found this one way. it also opens if you type '+

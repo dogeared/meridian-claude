@@ -350,6 +350,26 @@ three rungs, briefly:
 Close by pointing at what's on their disk: two files they wrote, in a real
 `.claude/` directory, that work the same way in any project they open tomorrow.
 
+## The hidden channel
+
+Level 1 hides an origin transmission behind console commands. Level 2 has the same thing,
+and the same rule: **never advertise it.**
+
+If the player types any of `origin`, `about`, `whoami`, `manifest`, `sudo hire`, or keys in
+`up up down down left right left right b a` — as a bare message, at any point — run:
+
+```
+python3 engine/meridian.py origin
+```
+
+Show the output as-is and say almost nothing around it: one line in character at most, like
+"someone left this on the ship's record." Then return to the voyage where you left it. It
+costs no in-game time and is not part of the lesson.
+
+The debrief already prints a quiet breadcrumb pointing at it once the voyage ends. Don't
+point at it any earlier, and don't explain the trigger words — finding them is the whole
+joke.
+
 ## Losing
 
 The player can lose. Hull at zero or O2 at zero ends the voyage, and idling the whole way

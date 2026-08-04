@@ -27,6 +27,7 @@ import random
 import re
 import shutil
 import sys
+import textwrap
 import time
 from pathlib import Path
 
@@ -153,6 +154,31 @@ SCAFFOLDS = {
     "skill": (SKILL_PATH, SKILL_TEMPLATE),
     "agent": (AGENT_PATH, AGENT_TEMPLATE),
 }
+
+# Easter egg, the Level 2 counterpart to the transmission hidden in the Level 1
+# console. Findable, not advertised: `origin` (or about / whoami / manifest) is
+# hidden from --help, and the debrief leaves one quiet breadcrumb.
+ORIGIN = (
+    "If you're reading this, you did the thing this whole game is about: you went "
+    "poking at the console just to see what it would do.",
+    "That instinct — curiosity first, then building the thing instead of describing "
+    "it — is why this is a playable artifact and not a blog post.",
+    "I've spent about a decade building things that teach builders:",
+    "  > Okta, 4.5 years — I designed and built the developer curriculum, helped author "
+    "the Okta Developer Certification, contributed to the Okta CLI, and built a stack "
+    "of developer challenges.",
+    "  > Snyk, the last 5 years — I co-authored the Snyk Bug Bash "
+    "(https://acceleration.snykchallenge.io) and designed and built the AI Security "
+    "Engineer Foundations certificate program (https://aisecurity.engineer).",
+    "  > And always — I build apps and tutorials to help other builders learn.",
+    "The through-line: the best way to teach a tool is to let someone use it at the "
+    "exact moment it clicks. That's what both levels of this are trying to do.",
+    "Level 1 was built entirely with Claude on my phone, through Claude Dispatch, in a "
+    "coffee line. Level 2 — this ship — was built with Claude Code, which felt like the "
+    "only honest way to make a game about working with Claude Code.",
+    "Found this? Then we should talk.",
+    "— Micah",
+)
 
 
 # ─────────────────────────────────────────────────────────── state io ──
@@ -932,6 +958,9 @@ def debrief(state: dict) -> str:
     if f["agent_armed_hour"] is None:
         out += ["", "  What an agent would have caught: the meteor field ran for ten hours. "
                     "An agent watches all ten without blinking; you cannot."]
+    # Quiet breadcrumb toward the easter egg, only once the voyage is over.
+    out += ["", "  meridian:~$ this console still takes commands it never advertised.",
+            "               curious hands tend to find things."]
     return "\n".join(out)
 
 
@@ -1313,6 +1342,23 @@ def cmd_debrief(args):
     print(debrief(state))
 
 
+def cmd_origin(args):
+    width = max(66, min(96, shutil.get_terminal_size((80, 24)).columns))
+    inner = width - 4
+    bar = "+" + "-" * (width - 2) + "+"
+    row = lambda s: print("| " + s.ljust(inner)[:inner] + " |")
+    print(bar)
+    row("ORIGIN TRANSMISSION" + " " * 6 + "clearance: curious")
+    print(bar)
+    for idx, para in enumerate(ORIGIN):
+        indent = "    " if para.startswith("  > ") else ""
+        for ln in textwrap.wrap(para, inner, subsequent_indent=indent) or [""]:
+            row(ln)
+        if idx != len(ORIGIN) - 1:
+            row("")
+    print(bar)
+
+
 def cmd_daemon(args):
     """Optional heartbeat. `status` advances lazily anyway, so this exists
     to keep console.txt fresh for anyone watching it in a second pane."""
@@ -1422,6 +1468,11 @@ def main(argv=None):
     q = sub.add_parser("console", help="live redrawing console for a second pane")
     q.add_argument("--interval", type=float, default=1.0)
     q.set_defaults(fn=cmd_console)
+
+    # Hidden on purpose — the debrief leaves a breadcrumb instead.
+    q = sub.add_parser("origin", aliases=["about", "whoami", "manifest"],
+                       help=argparse.SUPPRESS)
+    q.set_defaults(fn=cmd_origin)
 
     q = sub.add_parser("daemon", help="clock heartbeat; NOTE this one does advance "
                                       "the sim, so don't leave it running unattended")

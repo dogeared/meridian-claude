@@ -23,12 +23,6 @@ Level 1 shows you the shape of the thing.
 
 **Level 2 makes you build it for real, inside Claude Code.**
 
-```sh
-git clone https://github.com/<you>/meridian && cd meridian
-claude
-> /meridian
-```
-
 Same ship, same copilot, but now it's a real-time game played through an ASCII console,
 and the two files at the center of it are files *you* write, on your actual disk, that
 actually run.
@@ -48,14 +42,47 @@ actually run.
 +------------------------------------------------------------------+
 ```
 
-### The live console
+### Quickstart
 
-The chat transcript scrolls, because a conversation is append-only. If you'd rather watch a
-console that redraws in place, run this in a second terminal pane:
+You need [Claude Code](https://claude.com/claude-code) and `python3` (3.9 or newer). No
+dependencies, nothing to install, no API keys.
 
 ```sh
+git clone https://github.com/dogeared/meridian-claude && cd meridian-claude
+claude
+```
+
+Then type:
+
+```
+/meridian
+```
+
+It'll ask your name, start the clock, and tell you the nav console is dark. From there just
+talk to it — start by asking *why* nav is dark. Everything else follows from the ship.
+
+**Optional: the ship's console in a second window.** The chat scrolls, so if you'd rather
+watch a dashboard that redraws in place, open another terminal in the same directory:
+
+```sh
+cd meridian-claude
 python3 engine/meridian.py console
 ```
+
+Leave it running side by side with Claude Code. It's read-only — it never advances the
+clock, so it's safe to keep open for the whole voyage. Ctrl-C closes it. You can start it
+any time, including mid-game.
+
+A full voyage takes about 25 minutes of real time. You can walk away and come back; the ship
+holds station while you're gone. To start over at any point:
+
+```sh
+python3 engine/meridian.py init --name "<your name>" --force
+```
+
+### The live console
+
+What that second window looks like:
 
 ```
 ╔════════════════════════════════════════════════════════════════════════════╗
