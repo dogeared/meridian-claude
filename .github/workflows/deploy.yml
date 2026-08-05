@@ -1,5 +1,9 @@
-name: Deploy to Netlify
+name: Build and deploy
 
+# Pull requests build and verify the payload but never publish; only a push to
+# main (i.e. a merge) deploys. So a red PR check means the payload is broken,
+# never that a bad deploy went out.
+#
 # The site is public but this repo is private, so the deploy publishes a
 # curated dist/ rather than the whole tree — the engine's event schedule and
 # the game master skill file would spoil the game if they were fetchable.
@@ -68,6 +72,9 @@ jobs:
           done
           echo "ok: no private paths in dist/"
 
+      # Deploy is deliberately absent on pull_request: a PR builds and verifies
+      # the payload but publishes nothing, so nothing reaches the live site
+      # until the PR is merged and main moves.
       - name: Deploy production
         if: github.event_name != 'pull_request'
         env:
@@ -75,18 +82,9 @@ jobs:
           NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
         run: |
           set -euo pipefail
+          test -n "${NETLIFY_AUTH_TOKEN:-}" || {
+            echo "::error::NETLIFY_AUTH_TOKEN is not set on this repo"; exit 1; }
+          test -n "${NETLIFY_SITE_ID:-}" || {
+            echo "::error::NETLIFY_SITE_ID is not set on this repo"; exit 1; }
           npx --yes "netlify-cli@${NETLIFY_CLI_VERSION}" deploy \
             --prod --dir=dist --message "${GITHUB_SHA::7} ${GITHUB_REF_NAME}"
-
-      - name: Deploy preview
-        if: github.event_name == 'pull_request'
-        env:
-          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
-          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
-        run: |
-          set -euo pipefail
-          npx --yes "netlify-cli@${NETLIFY_CLI_VERSION}" deploy \
-            --dir=dist --json --message "PR #${{ github.event.number }}" > deploy.json
-          url=$(python3 -c "import json;print(json.load(open('deploy.json'))['deploy_url'])")
-          echo "Preview: $url" >> "$GITHUB_STEP_SUMMARY"
-          echo "Preview: $url"
