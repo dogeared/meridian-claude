@@ -9,8 +9,9 @@ Your ship is failing and the crew is gone. All that's left is you and the onboar
 
 ## Level 1 — A Claude Copilot Adventure
 
-**`meridian-a-claude-copilot-adventure.html`** — open it in any browser. No build, no
-dependencies, nothing to install.
+**`index.html`** — open it in any browser. No build, no
+dependencies, nothing to install. Also live at
+[meridian-claude.dogeared.dev](https://meridian-claude.dogeared.dev).
 
 A short choose-your-own-adventure (~8 minutes) that walks the three rungs of working with
 Claude: writing a good prompt, capturing repeated work as a **Skill**, and delegating a

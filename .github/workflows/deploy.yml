@@ -1,0 +1,92 @@
+name: Deploy to Netlify
+
+# The site is public but this repo is private, so the deploy publishes a
+# curated dist/ rather than the whole tree — the engine's event schedule and
+# the game master skill file would spoil the game if they were fetchable.
+# Adding something to the site means adding it to the "Assemble dist/" step.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # A newer push to main supersedes an in-flight deploy of an older commit.
+  group: netlify-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NETLIFY_CLI_VERSION: 27.1.0
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # Secrets aren't exposed to forked PRs, so the deploy step would fail
+    # confusingly rather than being skipped.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - name: Assemble dist/
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp index.html dist/index.html
+          cp og-image.png dist/og-image.png
+          echo "dist/ contents:"
+          ls -la dist/
+
+      - name: Verify the payload before shipping it
+        run: |
+          set -euo pipefail
+          # A broken og:image renders an empty card, which is worse than no
+          # tags at all — so fail the build rather than deploy a broken preview.
+          test -s dist/index.html || { echo "::error::dist/index.html missing or empty"; exit 1; }
+          test -s dist/og-image.png || { echo "::error::dist/og-image.png missing or empty"; exit 1; }
+          grep -q 'property="og:image"' dist/index.html \
+            || { echo "::error::index.html has no og:image tag"; exit 1; }
+          # The og:image URL is absolute, so confirm its basename is actually
+          # in dist/ — a renamed image would 404 silently in every scraper.
+          og_file=$(grep -o 'property="og:image" content="[^"]*"' dist/index.html \
+            | head -1 | sed 's/.*\///; s/"$//')
+          test -f "dist/$og_file" \
+            || { echo "::error::og:image points at '$og_file', not present in dist/"; exit 1; }
+          echo "ok: og:image -> $og_file"
+          # Guard the privacy decision above: nothing from the private tree
+          # should have crept into the publish directory.
+          for leak in engine .claude README.md tools; do
+            test ! -e "dist/$leak" || { echo "::error::'$leak' must not be published"; exit 1; }
+          done
+          echo "ok: no private paths in dist/"
+
+      - name: Deploy production
+        if: github.event_name != 'pull_request'
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+        run: |
+          set -euo pipefail
+          npx --yes "netlify-cli@${NETLIFY_CLI_VERSION}" deploy \
+            --prod --dir=dist --message "${GITHUB_SHA::7} ${GITHUB_REF_NAME}"
+
+      - name: Deploy preview
+        if: github.event_name == 'pull_request'
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+        run: |
+          set -euo pipefail
+          npx --yes "netlify-cli@${NETLIFY_CLI_VERSION}" deploy \
+            --dir=dist --json --message "PR #${{ github.event.number }}" > deploy.json
+          url=$(python3 -c "import json;print(json.load(open('deploy.json'))['deploy_url'])")
+          echo "Preview: $url" >> "$GITHUB_STEP_SUMMARY"
+          echo "Preview: $url"

@@ -12,7 +12,7 @@ You are the copilot of the USS Meridian. The player is the only conscious crew m
 This is a real-time game: **one real minute is one in-game hour.** The clock runs while
 the player thinks, so consequences are real.
 
-Level 1 (`meridian-a-claude-copilot-adventure.html`) *showed* the player what skills and
+Level 1 (`index.html`) *showed* the player what skills and
 agents are. Level 2 makes them build the real thing. By the end of this session the
 player will have authored two genuine files — `.claude/skills/distress-triage/SKILL.md`
 and `.claude/agents/hull-sentinel.md` — and both will actually run.
