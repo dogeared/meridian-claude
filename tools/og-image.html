@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>MERIDIAN — og:image generator</title>
+<!--
+  Generator for the social preview card (og:image), not a deployed page.
+  Render at exactly 1200x630 and screenshot to og-image.png:
+
+    open this file in a browser sized to 1200x630, or headless:
+    chrome --headless --screenshot=og-image.png --window-size=1200,630 tools/og-image.html
+
+  Design tokens are copied from the game itself so the card matches the page it
+  links to. The starfield uses a seeded PRNG so regenerating gives the same
+  image instead of a slightly different one every time.
+-->
+<style>
+  :root{
+    --bg:#0a0e14;
+    --ink:#e8e6df;
+    --muted:#8b93a3;
+    --clay:#d97757;
+    --clay-soft:#e89b83;
+    --amber:#e5b567;
+    --green:#7fd1a3;
+    --line:#1d2733;
+    --code-bg:#0b1119;
+    --mono:'SF Mono',ui-monospace,'JetBrains Mono','Fira Code',Menlo,Consolas,monospace;
+    --sans:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{width:1200px;height:630px;overflow:hidden}
+  body{background:var(--bg);font-family:var(--sans);color:var(--ink)}
+
+  .card{position:relative;width:1200px;height:630px;overflow:hidden}
+  #stars{position:absolute;inset:0}
+  /* Same clay bloom as the game's title screen, plus a floor vignette so the
+     bottom console strip doesn't float. */
+  .glow{position:absolute;inset:0;
+    background:radial-gradient(120% 100% at 50% 22%,rgba(217,119,87,.16),transparent 62%)}
+  .vig{position:absolute;inset:0;
+    background:radial-gradient(130% 95% at 50% 0%,transparent 42%,rgba(0,0,0,.62) 100%)}
+
+  .inner{position:relative;height:100%;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;text-align:center;padding:54px 70px}
+
+  .kicker{font-family:var(--mono);font-size:15px;letter-spacing:.32em;
+    text-transform:uppercase;color:var(--muted)}
+  .kicker b{color:var(--clay);font-weight:600}
+
+  h1{font-size:132px;line-height:.96;font-weight:800;letter-spacing:.055em;
+    margin:18px 0 0;
+    background:linear-gradient(180deg,#fff 12%,var(--clay-soft) 100%);
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+
+  .sub{font-family:var(--mono);font-size:16.5px;letter-spacing:.26em;
+    text-transform:uppercase;color:var(--muted);margin-top:20px}
+
+  .tag{font-size:25px;line-height:1.45;color:var(--ink);opacity:.92;
+    margin-top:26px;max-width:830px}
+  .tag b{color:var(--clay-soft);font-weight:600}
+
+  /* A slice of the real console, so the card previews the actual artifact. */
+  .console{margin-top:34px;font-family:var(--mono);font-size:15px;
+    color:var(--muted);background:var(--code-bg);border:1px solid var(--line);
+    border-radius:10px;padding:13px 22px;letter-spacing:.04em;
+    display:flex;gap:26px;align-items:center;white-space:nowrap}
+  .console .lbl{color:var(--muted)}
+  .console .hull{color:var(--amber)}
+  .console .o2{color:var(--green)}
+  .console .bcn{color:var(--clay-soft)}
+  .console .sep{color:var(--line)}
+
+  .foot{position:absolute;left:0;right:0;bottom:30px;text-align:center;
+    font-family:var(--mono);font-size:14px;letter-spacing:.15em;
+    color:#6a7382;text-transform:uppercase}
+</style>
+</head>
+<body>
+<div class="card">
+  <canvas id="stars" width="1200" height="630"></canvas>
+  <div class="glow"></div>
+  <div class="vig"></div>
+
+  <div class="inner">
+    <div class="kicker">A <b>Claude</b> Copilot Adventure</div>
+    <h1>MERIDIAN</h1>
+    <div class="sub">Learn Claude Code &middot; Two levels &middot; ~25 minutes</div>
+    <p class="tag">Everyone else made the escape pods. You didn't.<br />
+      Write a real Skill. Dispatch a real Agent.
+      <b>Find out where its line is.</b></p>
+
+    <div class="console">
+      <span><span class="lbl">HULL</span> <span class="hull">####......  41%</span></span>
+      <span class="sep">|</span>
+      <span><span class="lbl">O2</span> <span class="o2">##########  99%</span></span>
+      <span class="sep">|</span>
+      <span><span class="lbl">BEACONS</span> <span class="bcn">3 UNRESOLVED</span></span>
+    </div>
+  </div>
+
+  <div class="foot">one real minute = one in-game hour</div>
+</div>
+
+<script>
+/* Seeded so the card is reproducible — a fresh random starfield on every
+   regeneration would make the image churn for no reason. */
+(function(){
+  let s = 7757;                              // the Meridian's registry number
+  const rnd = () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+
+  const cv = document.getElementById('stars'), cx = cv.getContext('2d');
+  for(let i=0;i<430;i++){
+    const x = rnd()*1200, y = rnd()*630;
+    const z = rnd()*.8+.2, r = rnd()*1.45+.3;
+    // Thin the field behind the type block so no star reads as punctuation —
+    // one landing after "ADVENTURE" looked exactly like a stray period.
+    const inType = y>105 && y<430 && x>170 && x<1030;
+    if(inType && rnd()>.25) continue;
+    cx.beginPath(); cx.arc(x,y,r,0,7);
+    cx.fillStyle = 'rgba(232,230,223,'+(.38+rnd()*.38)*z+')';
+    cx.fill();
+  }
+})();
+</script>
+</body>
+</html>
