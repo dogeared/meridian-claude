@@ -981,15 +981,33 @@ def refresh(state: dict) -> dict:
     return state
 
 
+def clear_authored_files() -> list[Path]:
+    """Delete a previous voyage's skill and agent.
+
+    Writing those two files IS the game, so a new voyage has to start with a
+    blank page — leaving them behind arms both mechanics at hour 1 and skips
+    the two beats the level exists to teach.
+    """
+    leftovers = [p for p in (SKILL_PATH, AGENT_PATH) if p.exists()]
+    for path in leftovers:
+        path.unlink()
+    return leftovers
+
+
 def cmd_init(args):
     if STATE_PATH.exists() and not args.force:
         die("A voyage is already in progress. Use --force to scrub and restart.")
+    cleared = clear_authored_files()
     state = new_state(args.name.strip() or "Ensign")
     state["sys"]["nav_err"] = None
     logev(state, "sys", "You wake to a low alarm. The nav console is dark.")
     save(state)
     print(dashboard(state))
     print()
+    if cleared:
+        names = ", ".join(str(p.relative_to(ROOT)) for p in cleared)
+        print(f"Deleted from a previous voyage: {names}. "
+              f"This one starts with a blank page.")
     print(f"Voyage begun. Clock running: 1 real minute = 1 in-game hour "
           f"(arrival at hour {state['arrival_hour']}).")
 

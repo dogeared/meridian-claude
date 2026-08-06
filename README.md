@@ -62,15 +62,23 @@ Then type:
 It'll ask your name, start the clock, and tell you the nav console is dark. From there just
 talk to it — start by asking *why* nav is dark. Everything else follows from the ship.
 
-**Optional: the ship's console in a second window.** The chat scrolls, so if you'd rather
-watch a dashboard that redraws in place, open another terminal in the same directory:
+**Optional: the ship's console in a second pane.** The chat scrolls, so if you'd rather
+watch a dashboard that redraws in place, just ask your copilot to open it — it'll split
+your terminal for you. Under the hood that's:
+
+```sh
+./tools/console-pane.sh
+```
+
+which works in tmux and iTerm2 (a real split pane) and Terminal.app (a new window). If it
+doesn't recognise your terminal, open a second one yourself in the same directory:
 
 ```sh
 cd meridian-claude
 python3 engine/meridian.py console
 ```
 
-Leave it running side by side with Claude Code. It's read-only — it never advances the
+Either way it sits side by side with Claude Code. It's read-only — it never advances the
 clock, so it's safe to keep open for the whole voyage. Ctrl-C closes it. You can start it
 any time, including mid-game.
 
@@ -80,6 +88,9 @@ holds station while you're gone. To start over at any point:
 ```sh
 python3 engine/meridian.py init --name "<your name>" --force
 ```
+
+That scrubs the ship *and* deletes the skill and agent files from your last voyage, so the
+new one starts with a blank page. Copy them somewhere else first if you want to keep them.
 
 ### The live console
 
