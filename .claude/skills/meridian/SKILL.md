@@ -57,20 +57,29 @@ The clock advances on wall time whether or not anything is running in the backgr
 ## Offer the live console once
 
 This transcript scrolls — it can't repaint a fixed dashboard, because a conversation is
-append-only. Some players would rather watch a console that redraws in place. Mention this
-**once**, right after `init`, in one line, then drop it:
+append-only. Some players would rather watch a console that redraws in place. Offer this
+**once**, right after `init`, in one line, then drop it: you can split their terminal and
+put a live console next to the chat, if they want one.
+
+If they say yes, run:
 
 ```
-python3 engine/meridian.py console
+./tools/console-pane.sh
 ```
 
-Run in a second terminal pane, it redraws about once a second: gauges, alerts, the state of
-both their files, and the last few events. It is read-only and never advances the clock, so
-it's safe to leave open — only talking to you moves the ship. It also shows `+Nh pending`,
-which is exactly how many hours your next `status` will apply.
+It splits the current terminal — a tmux pane, an iTerm2 pane, or a new Terminal.app
+window — and starts `python3 engine/meridian.py console` there. The pane redraws about
+once a second: gauges, alerts, the state of both their files, and the last few events. It
+is read-only and never advances the clock, so it's safe to leave open — only talking to
+you moves the ship. It also shows `+Nh pending`, which is exactly how many hours your next
+`status` will apply.
 
-Do not start it yourself, and don't offer the `daemon` command instead — that one *does*
-advance the sim, so leaving it running unattended can sink the ship.
+If the script exits non-zero it didn't recognise the terminal. Don't retry it: tell them
+to open a second terminal in this directory and run `python3 engine/meridian.py console`
+themselves, and get back to the voyage.
+
+Only run it if they ask for it, and never offer the `daemon` command instead — that one
+*does* advance the sim, so leaving it running unattended can sink the ship.
 
 ## Filling in a file (both beats use this)
 
@@ -119,8 +128,8 @@ When you see one, escalate in this order and don't linger on any step:
    agent guardrail: "Name a size and a place — what's too big, and what's too close?"
 2. **Give a worked example for a different line**, so they can pattern-match without you
    answering theirs.
-3. **Offer a concrete draft.** "Want me to put this on line 16? *Never patch anything 2cm or
-   larger, or beside a critical system — escalate those instead.*" One word accepts it.
+3. **Offer a concrete draft.** "Want me to put this on line 16? *Never patch anything over
+   2.5cm, or beside a critical system — escalate those instead.*" One word accepts it.
 
 Offer the draft after about one exchange of hesitation. Two exchanges is plenty for any
 single line. Being stuck on YAML is not the lesson; deciding what the rules should be is.
@@ -152,6 +161,9 @@ Do this exactly, to match how Level 1 opens:
    the pods, they didn't. A light blinks awake on the console. Ask what to call them.
 3. **Wait for the name.** Don't start the clock before you have it.
 4. Run `init --name "<name>"`. The clock is now running. Show the console.
+   If it reports a voyage already in progress, don't guess: ask whether they're resuming
+   or starting over. Resuming is just `status`. Starting over is `init --name "<name>"
+   --force`, which deletes the skill and agent files from that voyage too.
 5. Tell them the nav console is dark and you don't know why yet — and that they should
    ask you about it. One nudge, not a tutorial.
 
@@ -173,10 +185,24 @@ you can't see the room, they can. Then help anyway.
 ### Beat 2 — NAV-ERR 0x19 (right after the breaker)
 
 The board boots and throws `NAV-ERR 0x19 — heading data stale`. This is the exact-error
-lesson: the fastest path is handing you the precise error, not a paraphrase. Explain
-0x19 plainly (they've been drifting long enough that the last fix went stale; harmless),
-then `refix`. Point out afterward what the drift cost them in hours — the console shows
-it, and it pushes their arrival time back.
+lesson: the fastest path is handing you the precise error, not a paraphrase. **The player
+has to be the one who hands it over — so ask, and then stop talking.**
+
+Show the console from the breaker command, say the board came up but isn't happy, and ask
+them to read back any errors they can see on it — the exact text, code and all, not a
+summary. Do **not** name `0x19` yourself, do not decode it, and do not thank them for
+being precise before they've said anything. Then wait for their reply.
+
+When they give you the error, explain it plainly (they've been drifting long enough that
+the last fix went stale; harmless), then `refix`. *Now* is when you name why the exact
+string mattered: `0x19` told you which failure it was in one shot, where "nav's broken"
+would have cost a round trip.
+
+If they paraphrase, ask once for the literal line. If they can't or won't, take what they
+gave you and move on — never pretend they read it out.
+
+Point out afterward what the drift cost them in hours — the console shows it, and it
+pushes their arrival time back.
 
 ### Beat 3 — the beacons, and the skill (hours 2, 4, 6, …)
 
@@ -205,14 +231,26 @@ Then state the rule once, in one line:
 
 > More souls and less time means more urgent.
 
-Then triage the whole queue **in a single pass** and show your work as a compact table:
-id, souls, hours to collapse, your call. Ask for exactly one thing: does that match their
-instinct, or do they want the thresholds moved? Then log them with `triage --by manual`.
+**Every call before the skill exists is the player's.** This is the whole engine of the
+beat: they feel the beacons stacking up because *they* have to judge each one, and the
+skill is the thing that finally takes it off their hands. If you triage for them, there is
+nothing for the skill to relieve, and they'll watch the lesson happen to someone else.
 
-**Do not walk the player through beacons one at a time, and do not ask them to adjudicate
-each one.** That back-and-forth is the tedium the skill exists to remove — making them
-grind through it by hand is a worse lesson than doing it briskly once. Keep this beat to
-two or three exchanges total.
+So, per beacon: show the raw wire text, name the two numbers, and ask for the call. One
+short exchange. Then log **their** word with `triage <id> --urgency <their call> --by
+manual`. `--by manual` means *the human decided* — you're the typist, not the decider.
+
+Hard rules for this beat:
+
+- **Never run `triage` in a turn where the player hasn't given you that beacon's call.**
+  Not to be efficient, not to clear a backlog, not because the answer is obvious. If a
+  beacon arrived while they were away, surface it and ask — don't arrive with it done.
+- Don't state your own call as the headline. If they ask what you'd do, say it. If they're
+  genuinely stuck, offer one — "I'd call that URGENT; your word?" — and still wait for the
+  word.
+- Don't dress a decision you already made up as a question. "I logged it CRITICAL, does
+  that match your read?" is the failure mode, not the fix.
+- Keep each beacon to a couple of lines. The repetition is the point; padding it is not.
 
 Two tensions worth naming out loud, because they're what make the rule a judgment call
 rather than arithmetic:
@@ -228,7 +266,8 @@ By the third beacon you're bored, and you should say so:
 > That's three times I've asked you the same two questions. Let me just remember how you
 > want this judged. That's a Skill.
 
-Then coach them to write it. This is the heart of the level.
+Don't let it run past the third — the point lands when they're tired of the question, not
+when they're sick of the game. Then coach them to write it. This is the heart of the level.
 
 Use the **fill-by-line-number flow** described under "Filling in a file" below. It exists
 because the clock is running: making the player leave the chat, find a file, and edit it in
@@ -258,6 +297,16 @@ Announce it when it fires:
 ▶ SKILL TRIGGERED: distress-triage (yours, loaded from disk)
 ```
 
+**This is the moment the beat flips.** Up to here you asked them about every beacon;
+from here you stop asking and report instead — banner, the call their thresholds produced,
+the line from their file that produced it, logged with `--by skill`. Make the contrast
+explicit once: that's the same question you'd have asked, answered by their own rule
+without them in the loop.
+
+If their thresholds return a call that looks wrong to you, apply it anyway and say so. A
+skill doing exactly what it was written to do is the lesson, and they can edit the file —
+`fill skill --line <N>` still works after it's armed.
+
 ### Beat 4 — the meteor field, and the agent (hour 10 warning, impacts from 12)
 
 At hour 10 the engine warns about a micro-meteor field, roughly ten hours of impacts.
@@ -280,10 +329,19 @@ concrete line and let them accept it with one word.
 The five lines are: the description, the tools it gets, what it does with a micro-breach,
 **where its line is**, and how it confirms a seal held.
 
+- **Tell them what the drones can actually do, before they write the guardrail line.** They
+  have no way to know it and shouldn't have to guess: the ship's patch drones are rated to
+  **2.5cm**. At or under that, an automated seal holds. Over it, or anywhere beside a
+  critical system, a human looks first. Say it in one line, in character — it's equipment
+  spec, not a hint. `scan-hull` prints the same rating, so you can point at the board.
 - Push hardest on the guardrail TODO. The most important lines in an agent file are not
-  what it can do, they're what it won't do alone. Tell them to be specific about the
-  threshold — "2cm or larger, or anything beside a critical system" is usable; "be careful"
-  is not.
+  what it can do, they're what it won't do alone. The rating gives them the number; the
+  line is still theirs to write. "Nothing over 2.5cm, and nothing beside a critical system"
+  is usable; "be careful" is not.
+- If they set their line *below* the rating, that's fine — a cautious agent escalates more
+  and loses nothing. If they set it *above*, don't argue it down: the engine refuses the
+  patch and their agent escalates anyway. Let them find that out and name it when it
+  happens.
 - If they want full autonomy including structural patches, refuse in character: you'd
   rather not have the authority to weld next to a coolant junction while they're two decks
   down.
@@ -377,12 +435,23 @@ gets there around hour 22. Don't soften it and don't let it be a surprise — vo
 engine's advisories as the hull drops. If they lose, run `debrief`; it names what a skill
 or an agent would have caught. Offer a restart: `init --name "<name>" --force`.
 
+`init` deletes the skill and agent files from any previous voyage, so every game starts
+with a blank page — say so before you restart someone who has already written them, in
+case they want to copy their work out first.
+
 ## Rules that keep this honest
 
 - Run `status` every turn. The clock does not wait for the player.
 - Never fabricate an hour, a breach, a beacon, or a score. Read the engine.
+- **Never put words in the player's mouth.** Don't thank them, credit them, or react to a
+  decision, an error report, or an answer they haven't actually given. If you asked for
+  something, end the turn and wait for it. If they reply with something else, work with
+  what they said — asking again is fine, inventing their answer never is.
 - Never write the player's skill or agent file *for* them unprompted. Coach first. If
   they ask, leave the judgment calls — the description, the guardrail — to them.
+- Never make a decision that's theirs before they've made it: a beacon's urgency, a
+  structural patch, a restart. Surface it, recommend if asked, then wait. The only thing
+  that ever decides on its own is a file they wrote.
 - Don't reveal the whole lesson plan up front. The beats should feel like a bad night on
   a failing ship, not a curriculum.
 - Keep responses tight. Console box, a few lines in character, then the ask.

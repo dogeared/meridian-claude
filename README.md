@@ -62,15 +62,23 @@ Then type:
 It'll ask your name, start the clock, and tell you the nav console is dark. From there just
 talk to it — start by asking *why* nav is dark. Everything else follows from the ship.
 
-**Optional: the ship's console in a second window.** The chat scrolls, so if you'd rather
-watch a dashboard that redraws in place, open another terminal in the same directory:
+**Optional: the ship's console in a second pane.** The chat scrolls, so if you'd rather
+watch a dashboard that redraws in place, just ask your copilot to open it — it'll split
+your terminal for you. Under the hood that's:
+
+```sh
+./tools/console-pane.sh
+```
+
+which works in tmux and iTerm2 (a real split pane) and Terminal.app (a new window). If it
+doesn't recognise your terminal, open a second one yourself in the same directory:
 
 ```sh
 cd meridian-claude
 python3 engine/meridian.py console
 ```
 
-Leave it running side by side with Claude Code. It's read-only — it never advances the
+Either way it sits side by side with Claude Code. It's read-only — it never advances the
 clock, so it's safe to keep open for the whole voyage. Ctrl-C closes it. You can start it
 any time, including mid-game.
 
@@ -80,6 +88,9 @@ holds station while you're gone. To start over at any point:
 ```sh
 python3 engine/meridian.py init --name "<your name>" --force
 ```
+
+That scrubs the ship *and* deletes the skill and agent files from your last voyage, so the
+new one starts with a blank page. Copy them somewhere else first if you want to keep them.
 
 ### The live console
 
@@ -134,9 +145,11 @@ six hours, so you can walk away and come back.
    refuses to let the skill resolve a beacon until the file is actually good, and it checks
    that your rubric uses both numbers — not just that it exists.
 4. **A micro-meteor field**, ten hours of impacts, while you're needed two decks down.
-   You can't be in two places. Write `.claude/agents/hull-sentinel.md`, then watch it get
-   dispatched as a genuine subagent that scans the hull, patches micro-breaches, verifies
-   its own seals, and refuses to touch anything structural.
+   You can't be in two places. The ship tells you what its patch drones are rated for —
+   2.5cm, clear of critical systems — and where to draw the line is yours. Write
+   `.claude/agents/hull-sentinel.md`, then watch it get dispatched as a genuine subagent
+   that scans the hull, patches what it's allowed to, verifies its own seals, and refuses
+   the rest.
 5. **Hour 22-ish, something over the line.** The agent stops and asks. That moment is the
    whole point of the guardrail you wrote.
 
@@ -149,8 +162,8 @@ The guardrail isn't roleplay. It's enforced in the engine:
 
 ```sh
 $ python3 engine/meridian.py patch 4 --as agent --verify
-REFUSED. Breach #4 is 3.1cm and sits beside a critical system. That is over
-the line for an autonomous patch.
+REFUSED. Breach #4 is 3.1cm and sits beside a critical system. Patch drones are
+rated to 2.5cm, so that is over the line for an autonomous patch.
 Escalate it to the human and keep working the micro-breaches.
 ```
 
