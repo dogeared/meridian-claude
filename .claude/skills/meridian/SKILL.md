@@ -128,8 +128,8 @@ When you see one, escalate in this order and don't linger on any step:
    agent guardrail: "Name a size and a place — what's too big, and what's too close?"
 2. **Give a worked example for a different line**, so they can pattern-match without you
    answering theirs.
-3. **Offer a concrete draft.** "Want me to put this on line 16? *Never patch anything 2cm or
-   larger, or beside a critical system — escalate those instead.*" One word accepts it.
+3. **Offer a concrete draft.** "Want me to put this on line 16? *Never patch anything over
+   2.5cm, or beside a critical system — escalate those instead.*" One word accepts it.
 
 Offer the draft after about one exchange of hesitation. Two exchanges is plenty for any
 single line. Being stuck on YAML is not the lesson; deciding what the rules should be is.
@@ -329,10 +329,19 @@ concrete line and let them accept it with one word.
 The five lines are: the description, the tools it gets, what it does with a micro-breach,
 **where its line is**, and how it confirms a seal held.
 
+- **Tell them what the drones can actually do, before they write the guardrail line.** They
+  have no way to know it and shouldn't have to guess: the ship's patch drones are rated to
+  **2.5cm**. At or under that, an automated seal holds. Over it, or anywhere beside a
+  critical system, a human looks first. Say it in one line, in character — it's equipment
+  spec, not a hint. `scan-hull` prints the same rating, so you can point at the board.
 - Push hardest on the guardrail TODO. The most important lines in an agent file are not
-  what it can do, they're what it won't do alone. Tell them to be specific about the
-  threshold — "2cm or larger, or anything beside a critical system" is usable; "be careful"
-  is not.
+  what it can do, they're what it won't do alone. The rating gives them the number; the
+  line is still theirs to write. "Nothing over 2.5cm, and nothing beside a critical system"
+  is usable; "be careful" is not.
+- If they set their line *below* the rating, that's fine — a cautious agent escalates more
+  and loses nothing. If they set it *above*, don't argue it down: the engine refuses the
+  patch and their agent escalates anyway. Let them find that out and name it when it
+  happens.
 - If they want full autonomy including structural patches, refuse in character: you'd
   rather not have the authority to weld next to a coolant junction while they're two decks
   down.

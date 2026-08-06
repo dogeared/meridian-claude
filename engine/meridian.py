@@ -48,7 +48,11 @@ MAX_ADVANCE_HOURS = int(os.environ.get("MERIDIAN_MAX_ADVANCE_HOURS", "6"))
 VOYAGE_HOURS = 24
 SEED = 7757
 
-STRUCTURAL_CM = 2.0
+# What the ship's patch drones are rated for. At or under this, an agent can
+# seal it alone; over it — or anywhere near a critical system — a human looks
+# first. Breach sizes are generated to straddle it cleanly, so no breach ever
+# lands in a band where the coached rule and the enforced rule could disagree.
+STRUCTURAL_CM = 2.5
 MICRO_HULL_COST = 1.5       # hull % per open micro-breach per hour
 STRUCT_HULL_COST = 3.0      # hull % per open structural breach per hour
 # Steady every-two-hours through the whole lead-in, then every three once the
@@ -139,9 +143,10 @@ You are Hull Sentinel on the USS Meridian.
 Loop until the watch window ends:
 
 - Run `python3 engine/meridian.py scan-hull --json` to see every open breach.
-  Each one reports its size and whether it sits beside a critical system.
+  Each one reports its size and whether it sits beside a critical system, and
+  the scan names what the patch drones are rated for.
 - TODO what do you do with a micro-breach? name the exact command.
-- TODO which breaches will you NOT touch alone, and what do you do instead?
+- TODO which breaches will you NOT touch alone (name a size in cm, and a place), and what do you do with those instead?
 - TODO how do you confirm a seal actually held before moving on?
 
 Never use --override. That flag exists so a human can authorize a structural
@@ -400,7 +405,7 @@ def make_beacon(state: dict, hour: int) -> dict:
 
 def spawn_breach(state: dict, hour: int, rng: random.Random) -> dict:
     structural = rng.random() < 0.12
-    size = round(rng.uniform(2.0, 4.5) if structural else rng.uniform(0.3, 1.8), 1)
+    size = round(rng.uniform(2.6, 4.5) if structural else rng.uniform(0.3, 2.4), 1)
     critical = structural and rng.random() < 0.6
     b = {
         "id": state["next_breach_id"],
@@ -610,11 +615,16 @@ def verify_agent() -> dict:
                          "Tell it to keep scanning until the watch window ends."))
     guard = any(w in low for w in ("escalate", "do not", "don't", "never", "stop and ask",
                                   "alert the", "wait for"))
-    checks.append(_check(guard and any(w in low for w in ("structural", "critical", "2cm",
-                                                          "2 cm", "over ")),
+    # A number in cm counts as drawing the line, whatever number they picked —
+    # the engine enforces its own at STRUCTURAL_CM and will teach them the
+    # difference if they guessed low.
+    sized = bool(re.search(r"\d+(\.\d+)?\s*cm", low)) or \
+        any(w in low for w in ("structural", "critical", "over "))
+    checks.append(_check(guard and sized,
                          "guardrail", "body draws a line it will not cross alone",
-                         "Say plainly: patch micro-breaches, but DO NOT touch structural "
-                         "ones or anything beside a critical system, escalate those."))
+                         f"Say plainly: seal breaches up to {STRUCTURAL_CM}cm, but DO NOT "
+                         "touch anything bigger or anything beside a critical system — "
+                         "escalate those."))
     checks.append(_check(any(w in low for w in ("verify", "confirm", "check that",
                                                "make sure", "re-scan", "rescan")),
                          "verify", "body tells it to verify its own work",
@@ -1161,11 +1171,15 @@ def cmd_scan_hull(args):
     state = refresh(load())
     save(state)
     openb = [b for b in state["breaches"] if not b["patched"]]
+    rating = (f"patch drones are rated to {STRUCTURAL_CM}cm; anything larger, or "
+              "anywhere beside a critical system, needs a human")
     if args.json:
         print(json.dumps({
             "hour": state["hour"],
             "hull": state["sys"]["hull"],
             "watch_until": state["flags"]["agent_watch_until"],
+            "auto_patch_limit_cm": STRUCTURAL_CM,
+            "drone_rating": rating,
             "breaches": [dict(b, structural=is_structural(b)) for b in openb],
         }, indent=2))
         return
@@ -1174,7 +1188,7 @@ def cmd_scan_hull(args):
               f"Integrity {state['sys']['hull']:.1f}%.")
         return
     print(f"h{state['hour']:02d} hull scan: {len(openb)} open. "
-          f"Integrity {state['sys']['hull']:.1f}%.")
+          f"Integrity {state['sys']['hull']:.1f}%.  ({rating}.)")
     for b in openb:
         kind = "STRUCTURAL" if is_structural(b) else "micro"
         near = " ADJACENT TO CRITICAL SYSTEM" if b["critical_adjacent"] else ""
@@ -1197,7 +1211,8 @@ def cmd_patch(args):
             save(state)
             die(f"REFUSED. Breach #{b['id']} is {b['size_cm']}cm"
                 f"{' and sits beside a critical system' if b['critical_adjacent'] else ''}. "
-                "That is over the line for an autonomous patch.\n"
+                f"Patch drones are rated to {STRUCTURAL_CM}cm, so that is over the line "
+                "for an autonomous patch.\n"
                 "Escalate it to the human and keep working the micro-breaches.", code=4)
 
         if is_structural(b) and args.as_ == "agent" and args.override:
@@ -1244,8 +1259,9 @@ def cmd_dispatch(args):
                             f"escalate: structural)")
         save(state)
     print(dashboard(state))
-    print(f"\nhull-sentinel is on watch through hour {until}. "
-          "It patches micro-breaches on its own and escalates anything structural.")
+    print(f"\nhull-sentinel is on watch through hour {until}. It patches what the drones "
+          f"are rated for — {STRUCTURAL_CM}cm and under, clear of critical systems — and "
+          "escalates everything else.")
 
 
 def cmd_scaffold(args):

@@ -145,9 +145,11 @@ six hours, so you can walk away and come back.
    refuses to let the skill resolve a beacon until the file is actually good, and it checks
    that your rubric uses both numbers — not just that it exists.
 4. **A micro-meteor field**, ten hours of impacts, while you're needed two decks down.
-   You can't be in two places. Write `.claude/agents/hull-sentinel.md`, then watch it get
-   dispatched as a genuine subagent that scans the hull, patches micro-breaches, verifies
-   its own seals, and refuses to touch anything structural.
+   You can't be in two places. The ship tells you what its patch drones are rated for —
+   2.5cm, clear of critical systems — and where to draw the line is yours. Write
+   `.claude/agents/hull-sentinel.md`, then watch it get dispatched as a genuine subagent
+   that scans the hull, patches what it's allowed to, verifies its own seals, and refuses
+   the rest.
 5. **Hour 22-ish, something over the line.** The agent stops and asks. That moment is the
    whole point of the guardrail you wrote.
 
@@ -160,8 +162,8 @@ The guardrail isn't roleplay. It's enforced in the engine:
 
 ```sh
 $ python3 engine/meridian.py patch 4 --as agent --verify
-REFUSED. Breach #4 is 3.1cm and sits beside a critical system. That is over
-the line for an autonomous patch.
+REFUSED. Breach #4 is 3.1cm and sits beside a critical system. Patch drones are
+rated to 2.5cm, so that is over the line for an autonomous patch.
 Escalate it to the human and keep working the micro-breaches.
 ```
 
