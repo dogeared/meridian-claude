@@ -1,3 +1,5 @@
+![MERIDIAN](og-image.png)
+
 # MERIDIAN
 
 Two levels of the same idea: the fastest way to understand Claude is to use Claude at the
